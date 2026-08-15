@@ -1,0 +1,12 @@
+{
+  "name": "pingbot",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.27.0",
+    "node-cron": "^4.2.1"
+  }
+}
