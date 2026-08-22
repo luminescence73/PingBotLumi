@@ -1,406 +1,1124 @@
 import {
-
   Client,
-
   GatewayIntentBits,
-
   Partials,
-
+  Events,
   ActionRowBuilder,
-
   ButtonBuilder,
-
   ButtonStyle,
-
   StringSelectMenuBuilder,
-
-  Events
-
+  MessageFlags
 } from "discord.js";
 
 import cron from "node-cron";
 
-// ======================================================
-
-// DISCORD CLIENT
-
-// ======================================================
+// =====================================================
+// CLIENT
+// =====================================================
 
 const client = new Client({
-
   intents: [
-
     GatewayIntentBits.Guilds,
-
     GatewayIntentBits.GuildMembers,
-
     GatewayIntentBits.GuildMessages,
-
     GatewayIntentBits.GuildMessageReactions
-
   ],
-
   partials: [
-
     Partials.Message,
-
     Partials.Channel,
-
     Partials.Reaction
-
   ]
-
 });
 
-// ======================================================
-
-// SERVER SETTINGS
-
-// ======================================================
-
-// Your existing reminder channel
-
-const REMINDER_CHANNEL_ID = "1537611487768744046";
-
-// Welcome / onboarding channels
+// =====================================================
+// CHANNELS
+// =====================================================
 
 const CHANNELS = {
+  REMINDERS: "1537611487768744046",
 
   START_HERE: "1540332552584167444",
-
   RULES: "1540332590891008093",
-
   ONBOARDING: "1540332651980787743",
-
   HELP: "1540332685216452610",
 
   INTRODUCTIONS: "1540407351469940888",
-
   PREFERENCES: "1540407411326591137"
-
 };
 
-// Language channels - used later for translation
+// =====================================================
+// CORE ROLES
+// =====================================================
 
-const LANGUAGE_CHANNELS = {
+const ASHEN_WARRIORS = "1507567323161038899";
+const ONBOARDING_COMPLETE = "1540336639635628032";
 
-  english: "1507565773336481966",
+// =====================================================
+// PROTECTED ROLES
+// PINGBOTLUMI WILL NEVER REMOVE THESE
+// =====================================================
 
-  spanish: "1540387246752931900",
-
-  french: "1540387342408351924",
-
-  german: "1540387464542167202",
-
-  portuguese: "1540387524709589002",
-
-  japanese: "1540387566480531537"
-
-};
-
-// ======================================================
-
-// PROTECTED STAFF ROLES
-
-// THESE WILL NEVER BE REMOVED BY ONBOARDING
-
-// ======================================================
-
-const PROTECTED_ROLE_IDS = new Set([
-
+const PROTECTED_ROLES = new Set([
   "1507567387774423171", // Owner
-
   "1507567296447516714", // Admin
-
   "1507567404836847747", // Deputy
-
   "1507567452391870544"  // Officers
-
 ]);
 
-// ======================================================
+// =====================================================
+// LANGUAGES
+// =====================================================
 
-// CORE ROLES
-
-// ======================================================
-
-const ASHEN_WARRIORS_ROLE = "1507567323161038899";
-
-const ONBOARDING_COMPLETE_ROLE = "1540336639635628032";
-
-// ======================================================
-
-// LANGUAGE ROLES
-
-// ======================================================
-
-const LANGUAGE_ROLES = {
-
+const LANGUAGES = {
   english: {
-
     name: "English",
-
     emoji: "🇺🇸",
-
-    roleId: "1540336707520434176"
-
+    role: "1540336707520434176"
   },
 
   spanish: {
-
     name: "Spanish",
-
     emoji: "🇪🇸",
-
-    roleId: "1540336749866131476"
-
+    role: "1540336749866131476"
   },
 
   french: {
-
     name: "French",
-
     emoji: "🇫🇷",
-
-    roleId: "1540337010609365073"
-
+    role: "1540337010609365073"
   },
 
   german: {
-
     name: "German",
-
     emoji: "🇩🇪",
-
-    roleId: "1540337119493357668"
-
+    role: "1540337119493357668"
   },
 
   portuguese: {
-
     name: "Portuguese",
-
     emoji: "🇵🇹",
-
-    roleId: "1540337336087482501"
-
+    role: "1540337336087482501"
   },
 
   japanese: {
-
     name: "Japanese",
-
     emoji: "🇯🇵",
-
-    roleId: "1540337389900271676"
-
+    role: "1540337389900271676"
   }
-
 };
 
-// ======================================================
+// =====================================================
+// PLAYSTYLE
+// =====================================================
 
-// PLAYSTYLE ROLES
-
-// ======================================================
-
-const PLAYSTYLE_ROLES = {
-
+const PLAYSTYLE = {
   casual: {
-
     name: "Casual",
-
     emoji: "🌿",
-
-    roleId: "1540337903497117736"
-
+    role: "1540337903497117736"
   },
 
   competitive: {
-
     name: "Competitive",
-
     emoji: "⚔️",
-
-    roleId: "1540337984459513877"
-
+    role: "1540337984459513877"
   },
 
   both: {
-
     name: "Both",
-
     emoji: "🎮",
-
-    roleId: "1540338047189655552"
-
+    role: "1540338047189655552"
   }
-
 };
 
-// ======================================================
+// =====================================================
+// SOCIAL
+// =====================================================
 
-// SOCIAL ROLES
-
-// ======================================================
-
-const SOCIAL_ROLES = {
-
+const SOCIAL = {
   chatty: {
-
     name: "Chatty",
-
     emoji: "💬",
-
-    roleId: "1540338102244216902"
-
+    role: "1540338102244216902"
   },
 
   quiet: {
-
     name: "Quiet",
-
     emoji: "🌙",
-
-    roleId: "1540338180291694604"
-
+    role: "1540338180291694604"
   },
 
   either: {
-
     name: "Either",
-
     emoji: "✨",
-
-    roleId: "1540338259761176606"
-
+    role: "1540338259761176606"
   }
-
 };
 
-// ======================================================
+// =====================================================
+// REMINDERS
+// =====================================================
 
-// REMINDER ROLES
-
-// ======================================================
-
-const REMINDER_ROLES = {
-
+const REMINDERS = {
   reset: {
-
     name: "Reset",
-
     emoji: "🔄",
-
-    roleId: "1537936033273086073"
-
+    role: "1537936033273086073"
   },
 
-  morningConquest: {
-
+  morning: {
     name: "Morning Conquest",
-
     emoji: "🌅",
-
-    roleId: "1537936135114854430"
-
+    role: "1537936135114854430"
   },
 
-  nightConquest: {
-
+  night: {
     name: "Night Conquest",
-
     emoji: "🌌",
-
-    roleId: "1537936185979183194"
-
+    role: "1537936185979183194"
   },
 
-  clashOpening: {
-
+  opening: {
     name: "Clash Opening Call",
-
     emoji: "🔔",
-
-    roleId: "1537936269043310752"
-
+    role: "1537936269043310752"
   },
 
-  clashBattle: {
-
+  battle: {
     name: "Clash Battle Call",
-
     emoji: "⚔️",
-
-    roleId: "1537936402497675265"
-
+    role: "1537936402497675265"
   },
 
-  clashFinal: {
-
+  final: {
     name: "Clash Final Call",
-
     emoji: "🚨",
-
-    roleId: "1537936646442451075"
-
+    role: "1537936646442451075"
   },
 
-  clashRegistration: {
-
+  registration: {
     name: "Guild Clash Registration",
-
     emoji: "⏰",
-
-    roleId: "1537936738998296618"
-
+    role: "1537936738998296618"
   }
-
 };
 
-// ======================================================
+// =====================================================
+// ROLES PINGBOT IS ALLOWED TO RESET
+// =====================================================
 
-// ALL BOT-CONTROLLED PREFERENCE ROLES
+const RESETTABLE_ROLES = new Set([
+  ASHEN_WARRIORS,
+  ONBOARDING_COMPLETE,
 
-// ======================================================
-
-const ALL_PREFERENCE_ROLE_IDS = new Set([
-
-  ...Object.values(LANGUAGE_ROLES).map(x => x.roleId),
-
-  ...Object.values(PLAYSTYLE_ROLES).map(x => x.roleId),
-
-  ...Object.values(SOCIAL_ROLES).map(x => x.roleId),
-
-  ...Object.values(REMINDER_ROLES).map(x => x.roleId)
-
+  ...Object.values(LANGUAGES).map(x => x.role),
+  ...Object.values(PLAYSTYLE).map(x => x.role),
+  ...Object.values(SOCIAL).map(x => x.role),
+  ...Object.values(REMINDERS).map(x => x.role)
 ]);
 
-// ======================================================
-
-// ONBOARDING TRANSLATIONS
-
-// ======================================================
+// =====================================================
+// ONBOARDING TEXT
+// =====================================================
 
 const TEXT = {
-
   english: {
-
     welcome: "Welcome to Ashen Warriors!",
-
-    languageChosen: "Your onboarding language is now English.",
-
-    reminders: "Which reminders would you like to receive?",
-
-    playstyle: "How would you describe your playstyle?",
-
-    social: "How social are you usually?",
-
+    reminders: "Which reminder pings would you like?",
+    playstyle: "What is your playstyle?",
+    social: "What is your social preference?",
     finish: "Finish Onboarding",
+    done: "Your onboarding is complete! Welcome to Ashen Warriors!"
+  },
 
-    completed: "Your onboarding is complete! Welcome to Ashen Warriors.",
+  spanish: {
+    welcome: "¡Bienvenido/a a Ashen Warriors!",
+    reminders: "¿Qué recordatorios quieres recibir?",
+    playstyle: "¿Cuál es tu estilo de juego?",
+    social: "¿Cuál es tu preferencia social?",
+    finish: "Finalizar incorporación",
+    done: "¡Tu incorporación está completa! ¡Bienvenido/a a Ashen Warriors!"
+  },
 
-    selectReminders: "Choose all reminder pings you want.",
-// trigger Railway deploy
+  french: {
+    welcome: "Bienvenue chez Ashen Warriors !",
+    reminders: "Quels rappels souhaitez-vous recevoir ?",
+    playstyle: "Quel est votre style de jeu ?",
+    social: "Quelle est votre préférence sociale ?",
+    finish: "Terminer l’intégration",
+    done: "Votre intégration est terminée ! Bienvenue chez Ashen Warriors !"
+  },
+
+  german: {
+    welcome: "Willkommen bei Ashen Warriors!",
+    reminders: "Welche Erinnerungen möchtest du erhalten?",
+    playstyle: "Wie ist dein Spielstil?",
+    social: "Was ist deine soziale Präferenz?",
+    finish: "Onboarding abschließen",
+    done: "Dein Onboarding ist abgeschlossen! Willkommen bei Ashen Warriors!"
+  },
+
+  portuguese: {
+    welcome: "Bem-vindo(a) ao Ashen Warriors!",
+    reminders: "Quais lembretes você deseja receber?",
+    playstyle: "Qual é o seu estilo de jogo?",
+    social: "Qual é a sua preferência social?",
+    finish: "Concluir integração",
+    done: "Sua integração está concluída! Bem-vindo(a) ao Ashen Warriors!"
+  },
+
+  japanese: {
+    welcome: "Ashen Warriorsへようこそ！",
+    reminders: "どのリマインダーを受け取りたいですか？",
+    playstyle: "プレイスタイルを選んでください。",
+    social: "交流スタイルを選んでください。",
+    finish: "オンボーディングを完了",
+    done: "オンボーディングが完了しました！Ashen Warriorsへようこそ！"
+  }
+};
+
+// Temporary onboarding choices
+const sessions = new Map();
+
+// =====================================================
+// MENUS
+// =====================================================
+
+function languageMenu() {
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("onboard_language")
+      .setPlaceholder("🌎 Choose your language")
+      .addOptions(
+        Object.entries(LANGUAGES).map(([key, item]) => ({
+          label: item.name,
+          value: key,
+          emoji: item.emoji
+        }))
+      )
+  );
+}
+
+function reminderMenu(language) {
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("onboard_reminders")
+      .setPlaceholder(TEXT[language].reminders)
+      .setMinValues(1)
+      .setMaxValues(8)
+      .addOptions(
+        ...Object.entries(REMINDERS).map(([key, item]) => ({
+          label: item.name,
+          value: key,
+          emoji: item.emoji
+        })),
+        {
+          label: "No reminders",
+          value: "none",
+          emoji: "🔕"
+        }
+      )
+  );
+}
+
+function playstyleMenu(language) {
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("onboard_playstyle")
+      .setPlaceholder(TEXT[language].playstyle)
+      .addOptions(
+        {
+          label: "Casual",
+          value: "casual",
+          emoji: "🌿"
+        },
+        {
+          label: "Competitive",
+          value: "competitive",
+          emoji: "⚔️"
+        },
+        {
+          label: "Both",
+          value: "both",
+          emoji: "🎮"
+        },
+        {
+          label: "Skip",
+          value: "skip",
+          emoji: "⏭️"
+        }
+      )
+  );
+}
+
+function socialMenu(language) {
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("onboard_social")
+      .setPlaceholder(TEXT[language].social)
+      .addOptions(
+        {
+          label: "Chatty",
+          value: "chatty",
+          emoji: "💬"
+        },
+        {
+          label: "Quiet",
+          value: "quiet",
+          emoji: "🌙"
+        },
+        {
+          label: "Either",
+          value: "either",
+          emoji: "✨"
+        },
+        {
+          label: "Skip",
+          value: "skip",
+          emoji: "⏭️"
+        }
+      )
+  );
+}
+
+function finishButton(language) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("onboard_finish")
+      .setLabel(TEXT[language].finish)
+      .setEmoji("✅")
+      .setStyle(ButtonStyle.Success)
+  );
+}
+
+// =====================================================
+// CREATE ONBOARDING PANEL
+// =====================================================
+
+async function setupOnboardingPanel() {
+  const channel = await client.channels.fetch(CHANNELS.ONBOARDING);
+
+  if (!channel?.isTextBased()) return;
+
+  const messages = await channel.messages.fetch({ limit: 50 });
+
+  const old = messages.find(
+    m =>
+      m.author.id === client.user.id &&
+      m.content.includes("ASHEN_ONBOARDING_PANEL")
+  );
+
+  if (old) return;
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("start_onboarding")
+      .setLabel("Start Onboarding")
+      .setEmoji("🌎")
+      .setStyle(ButtonStyle.Primary)
+  );
+
+  await channel.send({
+    content:
+      "**ASHEN_ONBOARDING_PANEL**\n\n" +
+      "# 🖤 Welcome to Ashen Warriors\n\n" +
+      "Choose your language first. The rest of onboarding will use that language.\n\n" +
+      "You'll choose:\n" +
+      "🌎 Language\n" +
+      "🔔 Ping preferences\n" +
+      "🎮 Playstyle\n" +
+      "💬 Social preference",
+    components: [row]
+  });
+}
+
+// =====================================================
+// MEMBER JOINS
+// =====================================================
+
+client.on(Events.GuildMemberAdd, async member => {
+  if (member.user.bot) return;
+
+  try {
+    await member.roles.add(ASHEN_WARRIORS);
+    console.log(`✅ Ashen Warriors added to ${member.user.tag}`);
+  } catch (error) {
+    console.error("❌ Could not add Ashen Warriors:", error);
+  }
+});
+
+// =====================================================
+// ONBOARDING INTERACTIONS
+// =====================================================
+
+client.on(Events.InteractionCreate, async interaction => {
+  try {
+    // START
+    if (
+      interaction.isButton() &&
+      interaction.customId === "start_onboarding"
+    ) {
+      sessions.set(interaction.user.id, {
+        language: null,
+        reminders: [],
+        playstyle: null,
+        social: null
+      });
+
+      await interaction.reply({
+        content:
+          "# 🌎 Choose your primary language\n\n" +
+          "The rest of onboarding will automatically switch to your language.",
+        components: [languageMenu()],
+        flags: MessageFlags.Ephemeral
+      });
+
+      return;
+    }
+
+    // LANGUAGE
+    if (
+      interaction.isStringSelectMenu() &&
+      interaction.customId === "onboard_language"
+    ) {
+      const language = interaction.values[0];
+
+      const session =
+        sessions.get(interaction.user.id) || {};
+
+      session.language = language;
+      session.reminders = [];
+      session.playstyle = null;
+      session.social = null;
+
+      sessions.set(interaction.user.id, session);
+
+      await interaction.update({
+        content:
+          `# ${TEXT[language].welcome}\n\n` +
+          `## 🔔 ${TEXT[language].reminders}`,
+        components: [reminderMenu(language)]
+      });
+
+      return;
+    }
+
+    // REMINDERS
+    if (
+      interaction.isStringSelectMenu() &&
+      interaction.customId === "onboard_reminders"
+    ) {
+      const session = sessions.get(interaction.user.id);
+
+      if (!session) return;
+
+      session.reminders = interaction.values.includes("none")
+        ? []
+        : interaction.values.filter(x => x !== "none");
+
+      await interaction.update({
+        content:
+          `# 🎮 ${TEXT[session.language].playstyle}`,
+        components: [playstyleMenu(session.language)]
+      });
+
+      return;
+    }
+
+    // PLAYSTYLE
+    if (
+      interaction.isStringSelectMenu() &&
+      interaction.customId === "onboard_playstyle"
+    ) {
+      const session = sessions.get(interaction.user.id);
+
+      if (!session) return;
+
+      session.playstyle =
+        interaction.values[0] === "skip"
+          ? null
+          : interaction.values[0];
+
+      await interaction.update({
+        content:
+          `# 💬 ${TEXT[session.language].social}`,
+        components: [socialMenu(session.language)]
+      });
+
+      return;
+    }
+
+    // SOCIAL
+    if (
+      interaction.isStringSelectMenu() &&
+      interaction.customId === "onboard_social"
+    ) {
+      const session = sessions.get(interaction.user.id);
+
+      if (!session) return;
+
+      session.social =
+        interaction.values[0] === "skip"
+          ? null
+          : interaction.values[0];
+
+      await interaction.update({
+        content: "✅ Ready to finish!",
+        components: [finishButton(session.language)]
+      });
+
+      return;
+    }
+
+    // FINISH
+    if (
+      interaction.isButton() &&
+      interaction.customId === "onboard_finish"
+    ) {
+      await interaction.deferUpdate();
+
+      const session = sessions.get(interaction.user.id);
+
+      if (!session) {
+        await interaction.editReply({
+          content:
+            "Your onboarding session expired. Please start again.",
+          components: []
+        });
+
+        return;
+      }
+
+      const member =
+        await interaction.guild.members.fetch(
+          interaction.user.id
+        );
+
+      // Reset only roles controlled by PingBotLumi.
+      // Protected staff roles are NEVER touched.
+      for (const roleId of RESETTABLE_ROLES) {
+        if (PROTECTED_ROLES.has(roleId)) continue;
+
+        if (member.roles.cache.has(roleId)) {
+          try {
+            await member.roles.remove(roleId);
+          } catch (error) {
+            console.error(
+              `❌ Could not reset role ${roleId}:`,
+              error.message
+            );
+          }
+        }
+      }
+
+      // Base membership
+      await member.roles.add(ASHEN_WARRIORS);
+
+      // Language
+      await member.roles.add(
+        LANGUAGES[session.language].role
+      );
+
+      // Reminder choices
+      for (const key of session.reminders) {
+        if (REMINDERS[key]) {
+          await member.roles.add(
+            REMINDERS[key].role
+          );
+        }
+      }
+
+      // Playstyle
+      if (session.playstyle) {
+        await member.roles.add(
+          PLAYSTYLE[session.playstyle].role
+        );
+      }
+
+      // Social
+      if (session.social) {
+        await member.roles.add(
+          SOCIAL[session.social].role
+        );
+      }
+
+      // Finished
+      await member.roles.add(
+        ONBOARDING_COMPLETE
+      );
+
+      // Introduction
+      const intro =
+        await interaction.guild.channels.fetch(
+          CHANNELS.INTRODUCTIONS
+        );
+
+      if (intro?.isTextBased()) {
+        const languageName =
+          LANGUAGES[session.language].name;
+
+        const playstyleName =
+          session.playstyle
+            ? PLAYSTYLE[session.playstyle].name
+            : "Not specified";
+
+        const socialName =
+          session.social
+            ? SOCIAL[session.social].name
+            : "Not specified";
+
+        await intro.send(
+          `# 🖤 Welcome ${member}!\n\n` +
+          `🌎 **Language:** ${languageName}\n` +
+          `🎮 **Playstyle:** ${playstyleName}\n` +
+          `💬 **Social:** ${socialName}\n\n` +
+          `Welcome to Ashen Warriors!`
+        );
+      }
+
+      sessions.delete(interaction.user.id);
+
+      await interaction.editReply({
+        content:
+          `# ✅ ${TEXT[session.language].done}`,
+        components: []
+      });
+
+      return;
+    }
+  } catch (error) {
+    console.error("❌ Interaction error:", error);
+  }
+});
+
+// =====================================================
+// PREFERENCE REACTION PANELS
+// =====================================================
+
+const preferenceMessages = {
+  languages: null,
+  reminders: null,
+  playstyle: null,
+  social: null
+};
+
+async function createPreferenceMessage(
+  channel,
+  marker,
+  text,
+  emojis
+) {
+  const messages =
+    await channel.messages.fetch({
+      limit: 100
+    });
+
+  let message = messages.find(
+    m =>
+      m.author.id === client.user.id &&
+      m.content.includes(marker)
+  );
+
+  if (!message) {
+    message = await channel.send(text);
+  }
+
+  for (const emoji of emojis) {
+    try {
+      await message.react(emoji);
+    } catch (error) {
+      console.error(
+        `❌ Reaction ${emoji} failed:`,
+        error.message
+      );
+    }
+  }
+
+  return message;
+}
+
+async function setupPreferences() {
+  const channel = await client.channels.fetch(
+    CHANNELS.PREFERENCES
+  );
+
+  if (!channel?.isTextBased()) return;
+
+  preferenceMessages.languages =
+    await createPreferenceMessage(
+      channel,
+      "ASHEN_LANG_PREF",
+      "**ASHEN_LANG_PREF**\n\n" +
+      "# 🌎 Languages\n" +
+      "React to every language you want access to.\n\n" +
+      "🇺🇸 English\n" +
+      "🇪🇸 Spanish\n" +
+      "🇫🇷 French\n" +
+      "🇩🇪 German\n" +
+      "🇵🇹 Portuguese\n" +
+      "🇯🇵 Japanese",
+      Object.values(LANGUAGES).map(x => x.emoji)
+    );
+
+  preferenceMessages.reminders =
+    await createPreferenceMessage(
+      channel,
+      "ASHEN_REMINDER_PREF",
+      "**ASHEN_REMINDER_PREF**\n\n" +
+      "# 🔔 Ping Preferences\n" +
+      "React to every reminder you want.\n\n" +
+      "🔄 Reset\n" +
+      "🌅 Morning Conquest\n" +
+      "🌌 Night Conquest\n" +
+      "🔔 Clash Opening Call\n" +
+      "⚔️ Clash Battle Call\n" +
+      "🚨 Clash Final Call\n" +
+      "⏰ Guild Clash Registration",
+      Object.values(REMINDERS).map(x => x.emoji)
+    );
+
+  preferenceMessages.playstyle =
+    await createPreferenceMessage(
+      channel,
+      "ASHEN_PLAYSTYLE_PREF",
+      "**ASHEN_PLAYSTYLE_PREF**\n\n" +
+      "# 🎮 Playstyle\n" +
+      "Choose one.\n\n" +
+      "🌿 Casual\n" +
+      "⚔️ Competitive\n" +
+      "🎮 Both",
+      Object.values(PLAYSTYLE).map(x => x.emoji)
+    );
+
+  preferenceMessages.social =
+    await createPreferenceMessage(
+      channel,
+      "ASHEN_SOCIAL_PREF",
+      "**ASHEN_SOCIAL_PREF**\n\n" +
+      "# 💬 Social Preference\n" +
+      "Choose one.\n\n" +
+      "💬 Chatty\n" +
+      "🌙 Quiet\n" +
+      "✨ Either",
+      Object.values(SOCIAL).map(x => x.emoji)
+    );
+
+  console.log("✅ Preference panels ready.");
+}
+
+// =====================================================
+// REACTION ROLE HELPERS
+// =====================================================
+
+function itemByEmoji(group, emoji) {
+  return Object.values(group).find(
+    x => x.emoji === emoji
+  );
+}
+
+async function reactionRole(
+  reaction,
+  user,
+  adding
+) {
+  if (user.bot) return;
+
+  if (reaction.partial) {
+    await reaction.fetch();
+  }
+
+  const message = reaction.message;
+
+  if (!message.guild) return;
+
+  const member =
+    await message.guild.members.fetch(user.id);
+
+  const emoji = reaction.emoji.name;
+
+  // LANGUAGES
+  if (
+    message.id === preferenceMessages.languages?.id
+  ) {
+    const item = itemByEmoji(
+      LANGUAGES,
+      emoji
+    );
+
+    if (!item) return;
+
+    if (adding) {
+      await member.roles.add(item.role);
+    } else {
+      await member.roles.remove(item.role);
+    }
+
+    return;
+  }
+
+  // REMINDERS
+  if (
+    message.id === preferenceMessages.reminders?.id
+  ) {
+    const item = itemByEmoji(
+      REMINDERS,
+      emoji
+    );
+
+    if (!item) return;
+
+    if (adding) {
+      await member.roles.add(item.role);
+    } else {
+      await member.roles.remove(item.role);
+    }
+
+    return;
+  }
+
+  // PLAYSTYLE
+  if (
+    message.id === preferenceMessages.playstyle?.id
+  ) {
+    const item = itemByEmoji(
+      PLAYSTYLE,
+      emoji
+    );
+
+    if (!item) return;
+
+    if (adding) {
+      for (const other of Object.values(
+        PLAYSTYLE
+      )) {
+        if (
+          other.role !== item.role &&
+          member.roles.cache.has(other.role)
+        ) {
+          await member.roles.remove(
+            other.role
+          );
+        }
+      }
+
+      await member.roles.add(item.role);
+    } else {
+      await member.roles.remove(item.role);
+    }
+
+    return;
+  }
+
+  // SOCIAL
+  if (
+    message.id === preferenceMessages.social?.id
+  ) {
+    const item = itemByEmoji(
+      SOCIAL,
+      emoji
+    );
+
+    if (!item) return;
+
+    if (adding) {
+      for (const other of Object.values(
+        SOCIAL
+      )) {
+        if (
+          other.role !== item.role &&
+          member.roles.cache.has(other.role)
+        ) {
+          await member.roles.remove(
+            other.role
+          );
+        }
+      }
+
+      await member.roles.add(item.role);
+    } else {
+      await member.roles.remove(item.role);
+    }
+  }
+}
+
+client.on(
+  Events.MessageReactionAdd,
+  async (reaction, user) => {
+    try {
+      await reactionRole(
+        reaction,
+        user,
+        true
+      );
+    } catch (error) {
+      console.error(
+        "❌ Reaction add error:",
+        error
+      );
+    }
+  }
+);
+
+client.on(
+  Events.MessageReactionRemove,
+  async (reaction, user) => {
+    try {
+      await reactionRole(
+        reaction,
+        user,
+        false
+      );
+    } catch (error) {
+      console.error(
+        "❌ Reaction remove error:",
+        error
+      );
+    }
+  }
+);
+
+// =====================================================
+// AUTOMATIC REMINDER PINGS
+// =====================================================
+
+async function ping(role, text) {
+  try {
+    const channel =
+      await client.channels.fetch(
+        CHANNELS.REMINDERS
+      );
+
+    if (!channel?.isTextBased()) return;
+
+    await channel.send({
+      content: `<@&${role}> ${text}`,
+      allowedMentions: {
+        roles: [role]
+      }
+    });
+
+    console.log(`✅ Reminder sent: ${text}`);
+  } catch (error) {
+    console.error(
+      "❌ Reminder error:",
+      error
+    );
+  }
+}
+
+const TZ = "America/Chicago";
+
+// DAILY
+
+cron.schedule(
+  "0 8 * * *",
+  () =>
+    ping(
+      REMINDERS.reset.role,
+      "🔄 Reset reminder!"
+    ),
+  { timezone: TZ }
+);
+
+cron.schedule(
+  "30 11 * * *",
+  () =>
+    ping(
+      REMINDERS.morning.role,
+      "🌅 Morning Conquest reminder!"
+    ),
+  { timezone: TZ }
+);
+
+cron.schedule(
+  "30 20 * * *",
+  () =>
+    ping(
+      REMINDERS.night.role,
+      "🌌 Night Conquest reminder!"
+    ),
+  { timezone: TZ }
+);
+
+// MONDAY / WEDNESDAY / FRIDAY
+
+cron.schedule(
+  "0 10 * * 1,3,5",
+  () =>
+    ping(
+      REMINDERS.opening.role,
+      "🔔 Clash Opening Call!"
+    ),
+  { timezone: TZ }
+);
+
+cron.schedule(
+  "0 16 * * 1,3,5",
+  () =>
+    ping(
+      REMINDERS.battle.role,
+      "⚔️ Clash Battle Call!"
+    ),
+  { timezone: TZ }
+);
+
+cron.schedule(
+  "30 21 * * 1,3,5",
+  () =>
+    ping(
+      REMINDERS.final.role,
+      "🚨 Clash Final Call!"
+    ),
+  { timezone: TZ }
+);
+
+// SUNDAY / TUESDAY / THURSDAY
+
+cron.schedule(
+  "30 9 * * 0,2,4",
+  () =>
+    ping(
+      REMINDERS.registration.role,
+      "⏰ Guild Clash Registration reminder!"
+    ),
+  { timezone: TZ }
+);
+
+// =====================================================
+// READY
+// =====================================================
+
+client.once(Events.ClientReady, async readyClient => {
+  console.log(
+    `✅ PingBotLumi online as ${readyClient.user.tag}`
+  );
+
+  try {
+    await setupOnboardingPanel();
+    console.log("✅ Onboarding panel ready.");
+  } catch (error) {
+    console.error(
+      "❌ Onboarding panel error:",
+      error
+    );
+  }
+
+  try {
+    await setupPreferences();
+  } catch (error) {
+    console.error(
+      "❌ Preferences error:",
+      error
+    );
+  }
+
+  console.log(
+    "✅ All recurring schedules are active."
+  );
+});
+
+// =====================================================
+// LOGIN
+// =====================================================
 
 client.login(process.env.DISCORD_BOT);
