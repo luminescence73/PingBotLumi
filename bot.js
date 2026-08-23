@@ -1882,7 +1882,7 @@ let translationQueue =
 let lastTranslationTime = 0;
 
 const MIN_TRANSLATION_DELAY =
-  2000;
+  750;
 
 function queueTranslation(
   task
