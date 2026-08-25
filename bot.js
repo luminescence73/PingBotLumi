@@ -2764,124 +2764,118 @@ async function getTranslationWebhook(
 }
 
 // =====================================================
-// LANGUAGE QUEUES
+// PER-DESTINATION LANGUAGE QUEUES
 // =====================================================
 
-const destinationQueues =
-  new Map();
+const destinationQueues = new Map();
+const destinationWorkers = new Map();
 
-const destinationWorkers =
-  new Map();
-
-for (
-  const key of
-  Object.keys(
-    LANGUAGE_CHANNELS
-  )
-) {
-  destinationQueues.set(
-    key,
-    []
-  );
-
-  destinationWorkers.set(
-    key,
-    false
-  );
+for (const key of Object.keys(LANGUAGE_CHANNELS)) {
+  destinationQueues.set(key, []);
+  destinationWorkers.set(key, false);
 }
 
-function enqueueTranslation(
-  targetKey,
-  job
-) {
-  const queue =
-    destinationQueues.get(
-      targetKey
-    );
+function enqueueTranslation(targetKey, job) {
+  const queue = destinationQueues.get(targetKey);
 
-  if (
-    !queue
-  ) {
+  if (!queue) {
+    console.error(
+      `❌ No translation queue exists for ${targetKey}`
+    );
     return;
   }
 
-  queue.push(
-    job
+  queue.push(job);
+
+  console.log(
+    `📥 Translation queued: ${job.sourceInfo.name} → ${job.targetInfo.name} (${queue.length} waiting)`
   );
 
-  void processDestinationQueue(
-    targetKey
-  );
+  if (!destinationWorkers.get(targetKey)) {
+    void processDestinationQueue(targetKey);
+  }
 }
 
-async function processDestinationQueue(
-  targetKey
-) {
-  if (
-    destinationWorkers.get(
-      targetKey
-    )
-  ) {
+async function processDestinationQueue(targetKey) {
+  if (destinationWorkers.get(targetKey)) {
     return;
   }
 
-  destinationWorkers.set(
-    targetKey,
-    true
-  );
+  const queue = destinationQueues.get(targetKey);
 
-  const queue =
-    destinationQueues.get(
-      targetKey
+  if (!queue) {
+    console.error(
+      `❌ Translation queue missing for ${targetKey}`
     );
+    return;
+  }
+
+  destinationWorkers.set(targetKey, true);
+
+  console.log(
+    `▶️ Translation worker started: ${targetKey}`
+  );
 
   try {
-    while (
-      queue &&
-      queue.length >
-        0
-    ) {
-      const job =
-        queue[0];
+    while (queue.length > 0) {
+      const job = queue[0];
+
+      console.log(
+        `🔄 Processing translation: ${job.sourceInfo.name} → ${job.targetInfo.name}`
+      );
 
       try {
-        await processTranslationJob(
-          job
-        );
+        await Promise.race([
+          processTranslationJob(job),
+
+          new Promise((_, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    "Translation job timed out after 30 seconds"
+                  )
+                ),
+              30000
+            )
+          )
+        ]);
 
       } catch (error) {
         console.error(
-          `❌ Translation job → ${targetKey}:`,
-          error.message
+          `❌ Translation job ${job.sourceInfo.name} → ${job.targetInfo.name}:`,
+          error
         );
 
       } finally {
         queue.shift();
       }
 
-      await sleep(
-        10
-      );
+      await sleep(100);
     }
 
-  } finally {
-    destinationWorkers.set(
-      targetKey,
-      false
+  } catch (error) {
+    console.error(
+      `❌ Translation worker ${targetKey} crashed:`,
+      error
     );
 
-    if (
-      queue &&
-      queue.length >
-        0
-    ) {
-      void processDestinationQueue(
-        targetKey
+  } finally {
+    destinationWorkers.set(targetKey, false);
+
+    console.log(
+      `⏹️ Translation worker finished: ${targetKey}`
+    );
+
+    if (queue.length > 0) {
+      console.log(
+        `🔁 Restarting ${targetKey} worker because ${queue.length} jobs remain`
       );
+
+      void processDestinationQueue(targetKey);
     }
   }
 }
-
 // =====================================================
 // TEXT LIMIT
 // =====================================================
@@ -2930,11 +2924,18 @@ async function processTranslationJob(
     mentionIds
   } = job;
 
-  const targetChannel =
-    await client.channels.fetch(
-      targetInfo.channel
-    );
+  console.log(
+  `📡 Fetching ${targetInfo.name} channel...`
+);
 
+const targetChannel =
+  await client.channels.fetch(
+    targetInfo.channel
+  );
+
+console.log(
+  `✅ ${targetInfo.name} channel fetched.`
+);
   if (
     !targetChannel?.isTextBased()
   ) {
