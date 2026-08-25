@@ -2638,33 +2638,97 @@ async function translateText(
       }
 
       const data =
-        await response.json();
+  await response.json();
 
-      let translatedText =
+console.log(
+  `📦 MyMemory response ${source} → ${target}:`,
+  {
+    status:
+      data?.responseStatus,
+
+    details:
+      data?.responseDetails,
+
+    hasMainTranslation:
+      Boolean(
         data
           ?.responseData
-          ?.translatedText;
+          ?.translatedText
+      ),
 
-      if (
-        !translatedText ||
-        typeof translatedText !==
-          "string"
-      ) {
-        throw new Error(
-          "MyMemory returned no translation"
-        );
-      }
+    matches:
+      Array.isArray(
+        data?.matches
+      )
+        ? data.matches.length
+        : 0
+  }
+);
 
-      if (
-        data.responseStatus &&
-        data.responseStatus !==
-          200
-      ) {
-        throw new Error(
-          data.responseDetails ||
-          `MyMemory status ${data.responseStatus}`
-        );
-      }
+let translatedText =
+  data
+    ?.responseData
+    ?.translatedText;
+
+// =====================================================
+// FALLBACK TO MYMEMORY MATCHES
+// =====================================================
+
+if (
+  !translatedText ||
+  typeof translatedText !==
+    "string" ||
+  !translatedText.trim()
+) {
+  const fallback =
+    Array.isArray(
+      data?.matches
+    )
+      ? data.matches.find(
+          match =>
+            typeof match?.translation ===
+              "string" &&
+            match.translation.trim()
+        )
+      : null;
+
+  if (fallback) {
+    translatedText =
+      fallback.translation;
+
+    console.log(
+      `♻️ Using MyMemory fallback match ${source} → ${target}`
+    );
+  }
+}
+
+if (
+  !translatedText ||
+  typeof translatedText !==
+    "string" ||
+  !translatedText.trim()
+) {
+  throw new Error(
+    `MyMemory returned no translation${
+      data?.responseDetails
+        ? `: ${data.responseDetails}`
+        : ""
+    }`
+  );
+}
+
+if (
+  data.responseStatus &&
+  data.responseStatus !==
+    200
+) {
+  console.warn(
+    `⚠️ MyMemory status ${data.responseStatus}: ${
+      data.responseDetails ||
+      "No details supplied"
+    }`
+  );
+}
 
       translatedText =
         restoreDiscordMentions(
