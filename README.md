@@ -1,2 +1,2 @@
-# PingBotLumi
-Ping Bot
+# Vestra
+Vestra
