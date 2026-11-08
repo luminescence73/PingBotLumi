@@ -3510,13 +3510,66 @@ async function applyAshenSidebarTheme(guildOverride = null) {
       .catch(() => {});
   };
 
-  // Exactly ONE separator and ONE ending piece per section.
-  // No other decorative categories are created.
+  // -------------------------------------------------
+  // FINAL LAYOUT: TOP CATEGORY + ONE BOTTOM PIECE ONLY
+  // -------------------------------------------------
 
-  // WELCOME
-  const welcomeSeparator = await createDecorationCategory(
-    "━━━━ 𖤐 ━━━━"
-  );
+  // Put every known channel back under its real section.
+  for (const channel of [
+    byId(CHANNELS.START_HERE),
+    byId(CHANNELS.RULES),
+    byId(CHANNELS.ONBOARDING),
+    byId(CHANNELS.HELP),
+    byId(CHANNELS.STAFF_REQUESTS),
+    byId(CHANNELS.INTRODUCTIONS),
+    byId(CHANNELS.PREFERENCES),
+    guildMembers
+  ]) {
+    await moveChannel(channel, welcomeCategory);
+  }
+
+  for (const channel of [
+    adminAnnouncements,
+    sxsAnnouncements,
+    byId(CHANNELS.REMINDERS),
+    byId(CHANNELS.HIGHLIGHTS),
+    byId(CHANNELS.EVENT_BOARD)
+  ]) {
+    await moveChannel(channel, infoCategory);
+  }
+
+  for (const language of Object.values(LANGUAGE_CHANNELS)) {
+    await moveChannel(
+      byId(language.channel),
+      sxsCategory
+    );
+  }
+
+  for (const channel of [
+    byId("1507566115994472568"),
+    byId("1538251460351889599"),
+    sxsEventBoard
+  ]) {
+    await moveChannel(channel, sxsCategory);
+  }
+
+  for (const id of SOCIAL_CHANNELS) {
+    await moveChannel(
+      byId(id),
+      socialCategory
+    );
+  }
+
+  for (const channel of [
+    generalVoice,
+    gamingVoice,
+    bossVoice,
+    adminsVoice
+  ]) {
+    await moveChannel(channel, voiceCategory);
+  }
+
+  // Create ONLY the ending piece for each section.
   const welcomeFooter = await createDecorationCategory(
     makeFooterName(
       "╭━━ 𖤐 WELCOME TO ASHEN 𖤐 ━━╮",
@@ -3524,30 +3577,6 @@ async function applyAshenSidebarTheme(guildOverride = null) {
     )
   );
 
-  await moveChannel(
-    byId(CHANNELS.PREFERENCES),
-    welcomeSeparator
-  );
-  await moveChannel(
-    guildMembers,
-    welcomeSeparator
-  );
-
-  await placeAfter(
-    welcomeSeparator,
-    welcomeCategory,
-    1
-  );
-  await placeAfter(
-    welcomeFooter,
-    welcomeSeparator,
-    1
-  );
-
-  // INFO
-  const infoSeparator = await createDecorationCategory(
-    "━━━━ ✦ ━━━━"
-  );
   const infoFooter = await createDecorationCategory(
     makeFooterName(
       "╭━━ ✦ ASHEN INFO ✦ ━━╮",
@@ -3555,29 +3584,6 @@ async function applyAshenSidebarTheme(guildOverride = null) {
     )
   );
 
-  for (const channel of [
-    byId(CHANNELS.REMINDERS),
-    byId(CHANNELS.HIGHLIGHTS),
-    byId(CHANNELS.EVENT_BOARD)
-  ]) {
-    await moveChannel(channel, infoSeparator);
-  }
-
-  await placeAfter(
-    infoSeparator,
-    infoCategory,
-    1
-  );
-  await placeAfter(
-    infoFooter,
-    infoSeparator,
-    1
-  );
-
-  // SWORD X STAFF
-  const sxsSeparator = await createDecorationCategory(
-    "━━━━ ⚔ ━━━━"
-  );
   const sxsFooter = await createDecorationCategory(
     makeFooterName(
       "╭━━ ⚔ SWORD X STAFF ⚔ ━━╮",
@@ -3585,88 +3591,12 @@ async function applyAshenSidebarTheme(guildOverride = null) {
     )
   );
 
-  for (const channel of [
-    byId("1507566115994472568"),
-    byId("1538251460351889599"),
-    sxsEventBoard
-  ]) {
-    await moveChannel(channel, sxsSeparator);
-  }
-
-  await placeAfter(
-    sxsSeparator,
-    sxsCategory,
-    1
-  );
-  await placeAfter(
-    sxsFooter,
-    sxsSeparator,
-    1
-  );
-
-  // SOCIAL
-  const socialSeparator = await createDecorationCategory(
-    "━━━━ ♡ ━━━━"
-  );
   const socialFooter = await createDecorationCategory(
     makeFooterName(
       "╭━━ ♡ ASHEN SOCIAL ♡ ━━╮",
       "☾"
     )
   );
-
-  for (const id of [
-    "1542252701578961028",
-    "1542252734076690442",
-    "1542252850808365226",
-    "1542252884614184980",
-    "1542252909222166628",
-    "1542253001824272454",
-    "1542253232464601138"
-  ]) {
-    await moveChannel(
-      byId(id),
-      socialSeparator
-    );
-  }
-
-  await placeAfter(
-    socialSeparator,
-    socialCategory,
-    1
-  );
-  await placeAfter(
-    socialFooter,
-    socialSeparator,
-    1
-  );
-
-  // VOICE
-  const voiceSecondaryChannels = [
-    bossVoice,
-    adminsVoice
-  ].filter(Boolean);
-
-  let voiceSeparator = null;
-
-  if (voiceSecondaryChannels.length) {
-    voiceSeparator = await createDecorationCategory(
-      "━━━━ 𖤐 ━━━━"
-    );
-
-    for (const channel of voiceSecondaryChannels) {
-      await moveChannel(
-        channel,
-        voiceSeparator
-      );
-    }
-
-    await placeAfter(
-      voiceSeparator,
-      voiceCategory,
-      1
-    );
-  }
 
   const voiceFooter = await createDecorationCategory(
     makeFooterName(
@@ -3676,13 +3606,37 @@ async function applyAshenSidebarTheme(guildOverride = null) {
   );
 
   await placeAfter(
+    welcomeFooter,
+    welcomeCategory,
+    1
+  );
+
+  await placeAfter(
+    infoFooter,
+    infoCategory,
+    1
+  );
+
+  await placeAfter(
+    sxsFooter,
+    sxsCategory,
+    1
+  );
+
+  await placeAfter(
+    socialFooter,
+    socialCategory,
+    1
+  );
+
+  await placeAfter(
     voiceFooter,
-    voiceSeparator || voiceCategory,
+    voiceCategory,
     1
   );
 
   console.log(
-    `🖤 Ashen theme: ${report.removed.length} old decorations removed, ${report.created.length} final decorations created, ${report.failed.length} failed.`
+    `🖤 Ashen theme: ${report.removed.length} old decorations removed, ${report.created.length} bottom pieces created, ${report.failed.length} failed.`
   );
 
   return report;
@@ -4002,7 +3956,7 @@ client.on(Events.InteractionCreate, async interaction => {
         : "No channel names needed changing.";
 
       const created = report.created.length
-        ? "\n\n**Final separator / ending categories:**\n" +
+        ? "\n\n**Bottom pieces:**\n" +
           report.created.map(x => `✦ ${x}`).join("\n")
         : "";
 
@@ -4017,7 +3971,7 @@ client.on(Events.InteractionCreate, async interaction => {
           `**Server ID:** ${report.guildId || "Unknown"}\n` +
           `**Renamed:** ${report.renamed.length}\n` +
           `**Old decorations removed:** ${report.removed?.length || 0}\n` +
-          `**Final decorations created:** ${report.created.length}\n` +
+          `**Bottom pieces created:** ${report.created.length}\n` +
           `**Already styled:** ${report.skipped.length}\n` +
           `**Failed:** ${report.failed.length}\n\n` +
           renamed +
