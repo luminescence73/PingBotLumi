@@ -1455,29 +1455,47 @@ async function enforceAshenMembersStaffOnly(guild) {
   return true;
 }
 
-function safeThreadTitle(message) {
-  const authorName = message.member?.displayName ||
-    message.author?.globalName || message.author?.username || "Ashen Member";
-
-  const firstLine = (message.content || "").split("\n")
+function ashenCaptionTitle(message) {
+  const raw = (message.content || "").trim();
+  const first = raw.split("\n")
     .map(x => x.trim())
-    .find(x => x && !/^(?:🎨\s*)?(?:credits?|art(?:work)? by|artist)\s*[:\-]?\s+/i.test(x));
-  const base = (firstLine || "").replace(/https?:\/\/\S+/gi, "")
-    .replace(/[^\p{L}\p{N}\s'’!?.&-]/gu, "").trim();
-  if (base.length >= 3) return base.slice(0, 80);
+    .filter(Boolean)
+    .find(x => !/^(?:credits?(?:\s+to|\s+by)?|art(?:work)? by|illustration by|created by|made by|artist)\b/i.test(x));
+  if (!first) return "";
+  return first
+    .replace(/https?:\/\/\S+/gi, "")
+    .replace(/\b(?:credits?(?:\s+to|\s+by)?|art(?:work)? by|illustration by|created by|made by)\b.*$/i, "")
+    .replace(/[^\p{L}\p{N}\s'’!?.&-]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 78);
+}
 
+function safeThreadTitle(message) {
+  const caption = ashenCaptionTitle(message);
+  if (caption.length >= 3) return caption;
+
+  const name = message.member?.displayName ||
+    message.author?.globalName || message.author?.username || "Member";
   const image = [...(message.attachments?.values() || [])]
     .find(a => a.contentType?.startsWith("image/") ||
       /\.(?:png|jpe?g|gif|webp)$/i.test(a.name || ""));
+
   if (image) {
-    const name = (image.name || "").replace(/\.(?:png|jpe?g|gif|webp)$/i, "")
-      .replace(/[_-]+/g, " ").trim();
-    if (name.length >= 4 && !/^(?:img|image|photo|screenshot|dsc)[\s\d_-]*$/i.test(name))
-      return ("🖼️ " + name).slice(0, 80);
-    return ("🖼️ " + authorName + "'s artwork").slice(0, 80);
+    const filename = (image.name || "")
+      .replace(/\.(?:png|jpe?g|gif|webp)$/i, "")
+      .replace(/[_-]+/g, " ")
+      .replace(/[^\p{L}\p{N}\s'-]/gu, "")
+      .trim();
+    // Camera-generated names are not useful showcase titles.
+    if (filename.length >= 4 &&
+        !/^(?:img|image|photo|screenshot|dsc|capture|received|file)[\s\d_-]*$/i.test(filename) &&
+        !/^\d{8,}$/.test(filename))
+      return filename.slice(0, 78);
+    return ("Artwork — " + name).slice(0, 78);
   }
 
-  return ("🖤 " + authorName + "'s post").slice(0, 80);
+  return ("Showcase — " + name).slice(0, 78);
 }
 
 // Optional visual titles: enable Google Cloud Vision API and configure
@@ -1551,25 +1569,21 @@ async function visualAshenThreadTitle(message) {
 
   const generic = /^(?:image|photography|photograph|art|artwork|illustration|visual arts|graphic design|fictional character|font|text|computer wallpaper|drawing|clip art)$/i;
   const labels = (json.responses?.[0]?.labelAnnotations || [])
-    .filter(x => x.score >= 0.65 && !generic.test(x.description || ""))
+    .filter(x => x.score >= 0.76 && !generic.test(x.description || ""))
     .map(x => (x.description || "").trim())
-    .filter(Boolean)
-    .slice(0, 3);
+    .filter(Boolean);
 
-  return labels.length ? ("🖼️ " + labels.join(" • ")).slice(0, 80) : null;
+  // A single reliable subject is cleaner than a list of vague API tags.
+  const subject = labels.find(x => x.length >= 4 && x.length <= 55);
+  return subject ? subject.replace(/\b\w/g, c => c.toUpperCase()).slice(0, 78) : null;
 }
 
 async function renameAshenThreadFromImage(message, thread) {
   if (!thread?.isThread?.() || !process.env.GOOGLE_VISION_API_KEY) return false;
-  const expectedTitle = safeThreadTitle(message);
-  const originalLine = (message.content || "").split("\n").map(x => x.trim())
-    .find(Boolean) || "";
-  const oldGeneratedTitle = originalLine.replace(/https?:\/\/\S+/gi, "")
-    .replace(/[^\p{L}\p{N}\s'’!?.&-]/gu, "").trim().slice(0, 80);
+  // Staff-provided captions are always preferable to automated image tags.
+  if (ashenCaptionTitle(message).length >= 3) return false;
+  if (thread.name !== safeThreadTitle(message)) return false;
 
-  // Respect staff-renamed threads and previously generated image titles.
-  if (thread.name !== expectedTitle && thread.name !== oldGeneratedTitle &&
-      !/^🖤 .+'s post$/.test(thread.name)) return false;
   const title = await visualAshenThreadTitle(message);
   if (!title || title === thread.name) return false;
 
@@ -1640,17 +1654,17 @@ function ashenPostInfoEmbed(message) {
 
   const embed = new EmbedBuilder()
     .setColor(BRAND_COLOR)
-    .setTitle("🖼️ Ashen Post Details")
+    .setTitle("ASHEN / SHOWCASE")
     .addFields(
-      { name: "👤 Posted by", value: "<@" + message.author.id + ">", inline: true },
-      { name: "🎨 Creator credits", value: limitText(credits, 1024), inline: true },
-      { name: "📅 Posted", value: "<t:" + Math.floor(message.createdTimestamp / 1000) + ":f>", inline: false },
-      { name: "📎 Attachments", value: attachmentCount ? (attachmentCount + " file" + (attachmentCount === 1 ? "" : "s")) : "None", inline: true },
-      { name: "🔗 Original post", value: "[View original](" + message.url + ")", inline: true }
+      { name: "Posted by", value: "<@" + message.author.id + ">", inline: true },
+      { name: "Creator credit", value: limitText(credits, 1024), inline: true },
+      { name: "Posted", value: "<t:" + Math.floor(message.createdTimestamp / 1000) + ":f>", inline: false },
+      { name: "Attachments", value: attachmentCount ? (attachmentCount + " file" + (attachmentCount === 1 ? "" : "s")) : "None", inline: true },
+      { name: "Original post", value: "[View original](" + message.url + ")", inline: true }
     )
     .setFooter({ text: "Vestra • Ashen Members • " + message.id });
 
-  if (caption) embed.addFields({ name: "📝 Caption", value: limitText(caption, 1024) });
+  if (caption) embed.addFields({ name: "Caption", value: limitText(caption, 1024) });
   return embed;
 }
 
@@ -1668,10 +1682,9 @@ function isLegacyAshenShowcasePost(message) {
 }
 
 function ashenDiscussionIntroduction(channelId) {
-  return "## 💬 Discuss This Post\n" +
-    "Share your thoughts, questions, and comments here so " +
-    "<#" + channelId + "> stays a clean showcase feed.\n\n" +
-    "*Vestra automatically creates one discussion space for every Ashen post.*";
+  return "## DISCUSSION\n" +
+    "All discussion belongs in this thread. Keep <#" + channelId +
+    "> reserved for staff showcases.";
 }
 
 // Reuse Vestra's existing discussion introduction and keep every user message
@@ -1694,10 +1707,10 @@ async function upsertAshenDiscussionDetails(message, thread) {
     );
     const oldIntroduction = recent.find(m =>
       m.author?.id === client.user?.id &&
-      m.content?.startsWith("## 💬 Discuss This Post")
+      (m.content?.startsWith("## 💬 Discuss This Post") || m.content?.startsWith("## DISCUSSION"))
     );
     const existing = detailsMessage || oldIntroduction;
-    const data = { embeds: [ashenPostInfoEmbed(message)], allowedMentions: { parse: [] } };
+    const data = { content: ashenDiscussionIntroduction(message.channel.id), embeds: [ashenPostInfoEmbed(message)], allowedMentions: { parse: [] } };
 
     if (existing) {
       await existing.edit(data);
@@ -1815,6 +1828,56 @@ async function backfillLegacyAshenMembersPosts(guild) {
     createdThreads + " threads created, " + updatedThreads +
     " details updated, " + skipped + " skipped, " + failed +
     " failed out of " + inspected + " messages inspected.");
+}
+
+// Refresh Vestra-authored showcase details and remove legacy decorated titles
+// without rewriting user captions or manually customized thread names.
+async function restyleAshenShowcaseHistory(guild) {
+  const key = "ashen_showcase_rebrand_v1";
+  if ((await dbGetState(key))?.completed) return;
+  const channel = getAshenMembersChannel(guild);
+  if (!channel) return;
+
+  let before;
+  let updated = 0;
+  let failed = 0;
+  while (true) {
+    const page = await channel.messages.fetch({
+      limit: 100,
+      ...(before ? { before } : {})
+    });
+    if (!page.size) break;
+    for (const message of page.values()) {
+      if (message.author?.bot || !message.hasThread) continue;
+      try {
+        const thread = message.thread ||
+          await message.guild.channels.fetch(message.id).catch(() => null);
+        if (!thread?.isThread?.()) continue;
+        const name = thread.name || "";
+        const firstLine = (message.content || "").split("\n").map(x => x.trim()).find(Boolean) || "";
+        const oldAutoCaption = firstLine.replace(/https?:\/\/\S+/gi, "")
+          .replace(/[^\p{L}\p{N}\s'’!?.&-]/gu, "").trim().slice(0, 80);
+        const legacyDefault = /^🖼️|^🖤 .*'s post$/.test(name);
+        const plainLegacy = name === oldAutoCaption && name !== safeThreadTitle(message);
+        if (legacyDefault || plainLegacy) {
+          const betterName = /^🖼️ /u.test(name) && name.includes(" • ")
+            ? name.replace(/^🖼️ /u, "").split(" • ")[0].slice(0, 78)
+            : safeThreadTitle(message);
+          if (betterName && betterName !== name) await thread.setName(betterName, "Ashen rebrand: remove decorative titles");
+        }
+        await upsertAshenDiscussionDetails(message, thread);
+        updated++;
+      } catch (error) {
+        failed++;
+        console.error("Could not restyle old Ashen showcase " + message.id + ": " + error.message);
+      }
+    }
+    before = page.last()?.id;
+    if (!before) throw new Error("Missing Ashen history cursor");
+    if (page.size < 100) break;
+  }
+  if (!failed) await dbSetState(key, { completed: true, updated });
+  console.log("Ashen showcase restyle: " + updated + " refreshed, " + failed + " failed");
 }
 
 async function ensureAshenMembersDiscussion(message) {
@@ -5756,6 +5819,7 @@ client.once(Events.ClientReady, async readyClient => {
 
   void (async () => {
     await backfillLegacyAshenMembersPosts(ashenGuild);
+    await restyleAshenShowcaseHistory(ashenGuild);
     await renameLegacyAshenImageThreads(ashenGuild);
   })().catch(error => {
     console.error("❌ Ashen Members historical showcase update:", error);
