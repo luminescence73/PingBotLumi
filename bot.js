@@ -3544,14 +3544,10 @@ async function applyAshenSidebarTheme(guildOverride = null) {
     const preferredName = makeSpacerName(
       topName,
       symbol,
-      "#"
-    );
-
-    const fallbackName = makeSpacerName(
-      topName,
-      symbol,
       "＃"
     );
+
+    const fallbackName = preferredName;
 
     const existingSpacers = guild.channels.cache.filter(
       ch =>
