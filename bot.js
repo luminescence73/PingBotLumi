@@ -3241,11 +3241,20 @@ async function applyAshenSidebarTheme(guildOverride = null) {
   const dashCount = name =>
     (String(name || "").match(/━/gu) || []).length;
 
+  const isApprovedSpacerChannel = channel =>
+    channel.type === ChannelType.GuildText &&
+    channel.name.endsWith("＃") &&
+    dashCount(channel.name) >= 3;
+
   const isOldDecorativePiece = channel => {
     if (
       channel.type !== ChannelType.GuildCategory &&
       channel.type !== ChannelType.GuildText
     ) {
+      return false;
+    }
+
+    if (isApprovedSpacerChannel(channel)) {
       return false;
     }
 
@@ -3494,6 +3503,65 @@ async function applyAshenSidebarTheme(guildOverride = null) {
     }
   };
 
+  const ensureSpacerChannel = async (
+    parentCategory,
+    name,
+    anchorChannel
+  ) => {
+    if (!parentCategory) return null;
+
+    let spacer = guild.channels.cache.find(
+      ch =>
+        ch.type === ChannelType.GuildText &&
+        ch.parentId === parentCategory.id &&
+        ch.name === name
+    ) || null;
+
+    try {
+      if (!spacer) {
+        spacer = await guild.channels.create({
+          name,
+          type: ChannelType.GuildText,
+          parent: parentCategory.id,
+          permissionOverwrites: [
+            {
+              id: guild.roles.everyone.id,
+              deny: [
+                PermissionFlagsBits.SendMessages,
+                PermissionFlagsBits.AddReactions,
+                PermissionFlagsBits.CreatePublicThreads,
+                PermissionFlagsBits.CreatePrivateThreads,
+                PermissionFlagsBits.SendMessagesInThreads
+              ]
+            }
+          ],
+          reason: "Ashen decorative locked spacer"
+        });
+
+        report.created.push(name);
+      } else {
+        report.skipped.push(name);
+      }
+
+      if (
+        spacer &&
+        anchorChannel &&
+        anchorChannel.parentId === parentCategory.id
+      ) {
+        await spacer
+          .setPosition(anchorChannel.position + 1)
+          .catch(() => {});
+      }
+
+      return spacer;
+    } catch (error) {
+      report.failed.push(
+        `Could not create spacer ${name}: ${error.message}`
+      );
+      return null;
+    }
+  };
+
   const makeFooterName = (topName, symbol) => {
     const targetLength = Math.max(
       12,
@@ -3584,6 +3652,35 @@ async function applyAshenSidebarTheme(guildOverride = null) {
   ]) {
     await moveChannel(channel, voiceCategory);
   }
+
+  // Add the four approved locked text-channel spacers.
+  // Welcome: after introductions.
+  await ensureSpacerChannel(
+    welcomeCategory,
+    "━━━━ 𖤐 ━━━━ ＃",
+    byId(CHANNELS.INTRODUCTIONS)
+  );
+
+  // Info: after the two announcement channels.
+  await ensureSpacerChannel(
+    infoCategory,
+    "━━━━ ✦ ━━━━ ＃",
+    sxsAnnouncements || adminAnnouncements
+  );
+
+  // Sword x Staff: after the six language chats, before media/resources.
+  await ensureSpacerChannel(
+    sxsCategory,
+    "━━━━ ⚔ ━━━━ ＃",
+    byId(LANGUAGE_CHANNELS.japanese.channel)
+  );
+
+  // Voice: after Gaming, before Boss Grinds / Admins / AFK.
+  await ensureSpacerChannel(
+    voiceCategory,
+    "━━━━ 𖤐 ━━━━ ＃",
+    gamingVoice || generalVoice
+  );
 
   // Create ONLY the ending piece for each section.
   const welcomeFooter = await createDecorationCategory(
@@ -3972,7 +4069,7 @@ client.on(Events.InteractionCreate, async interaction => {
         : "No channel names needed changing.";
 
       const created = report.created.length
-        ? "\n\n**Bottom pieces:**\n" +
+        ? "\n\n**New spacer / bottom pieces:**\n" +
           report.created.map(x => `✦ ${x}`).join("\n")
         : "";
 
@@ -3987,7 +4084,7 @@ client.on(Events.InteractionCreate, async interaction => {
           `**Server ID:** ${report.guildId || "Unknown"}\n` +
           `**Renamed:** ${report.renamed.length}\n` +
           `**Old decorations removed:** ${report.removed?.length || 0}\n` +
-          `**Bottom pieces created:** ${report.created.length}\n` +
+          `**Spacer / bottom pieces created:** ${report.created.length}\n` +
           `**Already styled:** ${report.skipped.length}\n` +
           `**Failed:** ${report.failed.length}\n\n` +
           renamed +
