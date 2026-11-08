@@ -27,6 +27,15 @@ const BOT_NAME = "Vestra";
 const TZ = "America/Chicago";
 const GOOGLE_TRANSLATE_URL = "https://translation.googleapis.com/language/translate/v2";
 const HIGHLIGHT_REACTION_THRESHOLD = 4;
+const BRAND_COLOR = 0x6674F4;
+
+const WELCOME_CATEGORY_ID = "1540332301962182686";
+const IMPORTANT_CATEGORY_ID = "1507566069362069564";
+
+const EXTRA_REACTION_TRANSLATION_CHANNELS = new Set([
+  "1507566115994472568", // SxS Media
+  "1538251460351889599"  // SxS Resources
+]);
 
 // =====================================================
 // REQUIRED ENVIRONMENT VARIABLES
@@ -147,6 +156,15 @@ async function initDatabase() {
       key TEXT PRIMARY KEY,
       value JSONB NOT NULL,
       updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+
+    `CREATE TABLE IF NOT EXISTS onboarding_sessions (
+      user_id TEXT PRIMARY KEY,
+      language TEXT,
+      reminders JSONB DEFAULT '[]'::jsonb,
+      playstyle TEXT,
+      social TEXT,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
     )`
   ];
 
@@ -171,6 +189,62 @@ async function dbSetState(key, value) {
      VALUES($1, $2::jsonb, NOW())
      ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
     [key, JSON.stringify(value)]
+  );
+}
+
+async function saveOnboardingSession(userId, session) {
+  await pool.query(
+    `INSERT INTO onboarding_sessions(user_id, language, reminders, playstyle, social, updated_at)
+     VALUES($1, $2, $3::jsonb, $4, $5, NOW())
+     ON CONFLICT(user_id) DO UPDATE SET
+       language = EXCLUDED.language,
+       reminders = EXCLUDED.reminders,
+       playstyle = EXCLUDED.playstyle,
+       social = EXCLUDED.social,
+       updated_at = NOW()`,
+    [
+      userId,
+      session.language || null,
+      JSON.stringify(session.reminders || []),
+      session.playstyle || null,
+      session.social || null
+    ]
+  );
+  sessions.set(userId, {
+    language: session.language || null,
+    reminders: [...(session.reminders || [])],
+    playstyle: session.playstyle || null,
+    social: session.social || null
+  });
+}
+
+async function getOnboardingSession(userId) {
+  if (sessions.has(userId)) return sessions.get(userId);
+
+  const result = await pool.query(
+    "SELECT language, reminders, playstyle, social FROM onboarding_sessions WHERE user_id = $1",
+    [userId]
+  );
+
+  if (!result.rows[0]) return null;
+
+  const row = result.rows[0];
+  const session = {
+    language: row.language || null,
+    reminders: Array.isArray(row.reminders) ? row.reminders : [],
+    playstyle: row.playstyle || null,
+    social: row.social || null
+  };
+
+  sessions.set(userId, session);
+  return session;
+}
+
+async function deleteOnboardingSession(userId) {
+  sessions.delete(userId);
+  await pool.query(
+    "DELETE FROM onboarding_sessions WHERE user_id = $1",
+    [userId]
   );
 }
 
@@ -393,6 +467,7 @@ const TEXT = {
 };
 
 const sessions = new Map();
+
 // =====================================================
 // GENERAL HELPERS
 // =====================================================
@@ -442,6 +517,91 @@ function emojiKey(emoji) {
   return emoji.name;
 }
 
+function brandEmbed(title, description = "") {
+  const embed = new EmbedBuilder()
+    .setColor(BRAND_COLOR)
+    .setTitle(title);
+
+  if (description) embed.setDescription(description);
+  return embed;
+}
+
+async function findWelcomeChannelByName(guild, name) {
+  return guild.channels.cache.find(
+    channel =>
+      channel.parentId === WELCOME_CATEGORY_ID &&
+      channel.isTextBased() &&
+      channel.name === name
+  ) || null;
+}
+
+async function upsertBotPanel(channelOrId, stateKey, payload, footerTag) {
+  const channel = typeof channelOrId === "string"
+    ? await client.channels.fetch(channelOrId).catch(() => null)
+    : channelOrId;
+
+  if (!channel?.isTextBased()) return null;
+
+  const saved = await dbGetState(stateKey).catch(() => null);
+  let message = saved?.messageId
+    ? await channel.messages.fetch(saved.messageId).catch(() => null)
+    : null;
+
+  if (!message && footerTag) {
+    const recent = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+    message = recent?.find(
+      m =>
+        m.author.id === client.user.id &&
+        m.embeds?.some(embed => embed.footer?.text === footerTag)
+    ) || null;
+  }
+
+  if (message) {
+    await message.edit(payload);
+  } else {
+    message = await channel.send(payload);
+  }
+
+  await dbSetState(stateKey, { messageId: message.id });
+  return message;
+}
+
+async function cleanupLegacyWelcomePanels() {
+  const channelIds = [
+    CHANNELS.START_HERE,
+    CHANNELS.ONBOARDING,
+    CHANNELS.HELP,
+    CHANNELS.PREFERENCES
+  ];
+
+  const marker =
+    /(ASHEN|VESTRA)_(START_HERE|ONBOARDING_PANEL|HELP_CENTER|LANG_PREF|REMINDER_PREF|PLAYSTYLE_PREF|SOCIAL_PREF|SETTINGS_PANEL|TOURNAMENT_PREF)/;
+
+  let removed = 0;
+
+  for (const channelId of channelIds) {
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+    if (!channel?.isTextBased()) continue;
+
+    const messages = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+    if (!messages) continue;
+
+    for (const message of messages.values()) {
+      if (
+        message.author.id === client.user.id &&
+        marker.test(message.content || "")
+      ) {
+        await message.delete().catch(() => {});
+        removed++;
+      }
+    }
+  }
+
+  if (removed) {
+    console.log(`🧹 Removed ${removed} legacy Vestra panel message(s).`);
+  }
+}
+
 // =====================================================
 // GOOGLE TRANSLATION — DISCORD CONTENT PROTECTION
 // =====================================================
@@ -461,10 +621,15 @@ function protectDiscordContent(input) {
     });
   };
 
+  // Keep code exactly intact.
   protect(/```[\s\S]*?```/g);
   protect(/`[^`\n]+`/g);
+
+  // Discord structures.
   protect(/<a?:[A-Za-z0-9_]+:\d+>/g);
   protect(/<@!?\d+>|<@&\d+>|<#\d+>|<t:\d+(?::[tTdDfFR])?>/g);
+
+  // Links / invites / media URLs.
   protect(/https?:\/\/[^\s<>]+/g);
 
   return { text, replacements };
@@ -582,24 +747,19 @@ async function inferPrimaryLanguage(member) {
 
 async function loadPrimaryLanguageMap(userIds) {
   if (!userIds.length) return new Map();
-
   const result = await pool.query(
     "SELECT user_id, primary_language FROM user_preferences WHERE user_id = ANY($1::text[])",
     [userIds]
   );
-
   return new Map(result.rows.map(row => [row.user_id, row.primary_language]));
 }
 
 function inferPrimaryFromRoles(member, savedMap) {
   const saved = savedMap.get(member.id);
   if (saved && LANGUAGE_CHANNELS[saved]) return saved;
-
   const owned = LANGUAGE_KEYS.filter(key => member.roles.cache.has(LANGUAGE_CHANNELS[key].role));
-
   if (owned.length === 1) return owned[0];
   if (owned.includes("english")) return "english";
-
   return owned[0] || "english";
 }
 
@@ -626,16 +786,68 @@ function reminderMenu(language) {
       .setCustomId("onboard_reminders")
       .setPlaceholder(TEXT[language].reminders)
       .setMinValues(1)
-      .setMaxValues(8)
+      .setMaxValues(Object.keys(REMINDERS).length + Object.keys(TOURNAMENTS).length + 1)
       .addOptions(
         ...Object.entries(REMINDERS).map(([key, item]) => ({
           label: item.name,
           value: key,
           emoji: item.emoji
         })),
+        ...Object.entries(TOURNAMENTS).map(([key, item]) => ({
+          label: `${item.name} Pings`,
+          value: `tournament:${key}`,
+          emoji: item.emoji
+        })),
         { label: "No reminders", value: "none", emoji: "🔕" }
       )
   );
+}
+
+function onboardingEmbed(step, title, description) {
+  return brandEmbed(`${step} · ${title}`, description)
+    .setFooter({ text: "Vestra • Ashen Warriors Onboarding" });
+}
+
+function onboardingSummaryEmbed(session) {
+  const language = session.language ? LANGUAGES[session.language] : null;
+  const reminderNames = (session.reminders || []).map(key => {
+    if (REMINDERS[key]) return `${REMINDERS[key].emoji} ${REMINDERS[key].name}`;
+    if (key.startsWith("tournament:")) {
+      const tournament = TOURNAMENTS[key.split(":")[1]];
+      return tournament ? `${tournament.emoji} ${tournament.name}` : key;
+    }
+    return key;
+  });
+
+  const playstyle = session.playstyle ? PLAYSTYLE[session.playstyle] : null;
+  const social = session.social ? SOCIAL[session.social] : null;
+
+  return brandEmbed(
+    "✅ Ready to Join Ashen Warriors",
+    "Everything looks good! Review your choices below, then finish onboarding."
+  )
+    .addFields(
+      {
+        name: "🌎 Primary Language",
+        value: language ? `${language.emoji} ${language.name}` : "Not selected",
+        inline: true
+      },
+      {
+        name: "🎮 Playstyle",
+        value: playstyle ? `${playstyle.emoji} ${playstyle.name}` : "Skipped",
+        inline: true
+      },
+      {
+        name: "💬 Social",
+        value: social ? `${social.emoji} ${social.name}` : "Skipped",
+        inline: true
+      },
+      {
+        name: "🔔 Pings",
+        value: reminderNames.length ? reminderNames.join("\n") : "🔕 No reminders"
+      }
+    )
+    .setFooter({ text: "Vestra • Your choices can be changed later in Role Preferences" });
 }
 
 function playstyleMenu(language) {
@@ -675,42 +887,112 @@ function finishButton(language) {
       .setStyle(ButtonStyle.Success)
   );
 }
+
 // =====================================================
 // START HERE / ONBOARDING / HELP / PREFERENCES
 // =====================================================
 
 async function setupStartHere() {
-  const channel = await client.channels.fetch(CHANNELS.START_HERE);
-  if (!channel?.isTextBased()) return;
+  const embed = brandEmbed(
+    "🖤 Welcome to Ashen Warriors",
+    `We’re glad you’re here!
 
-  const messages = await channel.messages.fetch({ limit: 50 });
-  const old = messages.find(m => m.author.id === client.user.id && m.content.includes("VESTRA_START_HERE"));
-  if (old) return;
+Ashen is built to make the guild easier to navigate, keep everyone connected, and give us a place to hang out outside of Sword x Staff.`
+  )
+    .addFields(
+      {
+        name: "1. 📜 Read the Rules",
+        value: `Head to <#${CHANNELS.RULES}> and take a minute to look through the server guidelines.
 
-  await channel.send({
-    content:
-      "**VESTRA_START_HERE**\n\n" +
-      "# 🖤 Welcome to Ashen Warriors\n\n" +
-      `**1. Read the Rules** — <#${CHANNELS.RULES}>\n` +
-      `**2. Complete Onboarding** — <#${CHANNELS.ONBOARDING}>\n` +
-      `**3. Manage Your Vestra Settings** — <#${CHANNELS.PREFERENCES}>\n` +
-      `**4. Need Help?** — <#${CHANNELS.HELP}>\n` +
-      `**5. Introductions** — <#${CHANNELS.INTRODUCTIONS}>\n\n` +
-      "🌎 General language chats are automatically mirrored and translated.\n" +
-      "🌐 In Social channels, react 🌐 to translate a message into your primary language.\n" +
-      "🔔 Your primary notification language controls where Vestra sends your event alerts.\n\n" +
-      "Welcome home. 🖤"
-  });
+They’re simple: be respectful, use common sense, and don’t intentionally make the server uncomfortable for other people.`
+      },
+      {
+        name: "2. 🌎 Complete Onboarding",
+        value: `Go to <#${CHANNELS.ONBOARDING}> and press **Start Onboarding**.
+
+You’ll choose your:
+🌎 **Primary language**
+🔔 **Ping preferences**
+🎮 **Playstyle**
+💬 **Social preference**
+
+Once you finish, the rest of the server unlocks automatically.`
+      },
+      {
+        name: "3. ✨ Customize Vestra Anytime",
+        value: `Use <#${CHANNELS.PREFERENCES}> whenever you want to change languages, reminders, tournament alerts, playstyle, social preferences, or your primary notification language.`
+      },
+      {
+        name: "4. 🆘 Need Help?",
+        value: `Visit <#${CHANNELS.HELP}> for game help, strategies, team finding, Discord help, FAQs, or to privately contact Ashen staff.`
+      },
+      {
+        name: "5. 👋 Meet the Guild",
+        value: `After onboarding, Vestra will introduce you in <#${CHANNELS.INTRODUCTIONS}>. Say hi, meet people, and make yourself at home!`
+      },
+      {
+        name: "🌍 Language & Translation",
+        value: `General language chats are automatically mirrored and translated between 🇺🇸 English, 🇪🇸 Spanish, 🇫🇷 French, 🇩🇪 German, 🇵🇹 Portuguese, and 🇯🇵 Japanese.
+
+In other supported text channels, react **🌐** to a message and Vestra will temporarily translate it into **your primary language**.`
+      },
+      {
+        name: "🔔 Guild Notifications",
+        value: "Vestra can send guild reminders directly in your **primary notification language**. You only receive the alerts you choose, including Clash reminders and tournament notifications."
+      },
+      {
+        name: "🖤 Most Importantly",
+        value: `Ashen Warriors is still meant to be fun. Talk, joke around, share things, ask for help, play together, and get to know people.
+
+**Welcome home. 🖤**`
+      }
+    )
+    .setFooter({ text: "Vestra • Start Here" });
+
+  await upsertBotPanel(
+    CHANNELS.START_HERE,
+    "panel_start_here",
+    { embeds: [embed] },
+    "Vestra • Start Here"
+  );
+}
+
+async function setupRulesPanel() {
+  const embed = brandEmbed(
+    "🖤 Ashen Rules — The Big Picture",
+    "The full guild rules are posted above. This is the short version to keep in mind while you’re here."
+  )
+    .addFields(
+      {
+        name: "🤝 Community",
+        value: "Be cool to each other, keep drama from taking over, use the right channels when you can, and know when a joke has gone too far."
+      },
+      {
+        name: "🛡️ Safety & Fairness",
+        value: "No genuine harassment, scams, account stealing, malicious links, cheats, or leaking private guild/staff information."
+      },
+      {
+        name: "🎮 Guild Expectations",
+        value: "Participate when you can, communicate if plans change, and remember that real life comes first."
+      },
+      {
+        name: "❤️ Most Importantly",
+        value: `**This is a guild, not a workplace.**
+
+Have fun, make friends, share memes, play together, and use common sense. Most small issues get a friendly reminder before anything serious happens.`
+      }
+    )
+    .setFooter({ text: "Vestra • Rules Guide" });
+
+  await upsertBotPanel(
+    CHANNELS.RULES,
+    "panel_rules_guide",
+    { embeds: [embed] },
+    "Vestra • Rules Guide"
+  );
 }
 
 async function setupOnboardingPanel() {
-  const channel = await client.channels.fetch(CHANNELS.ONBOARDING);
-  if (!channel?.isTextBased()) return;
-
-  const messages = await channel.messages.fetch({ limit: 50 });
-  const old = messages.find(m => m.author.id === client.user.id && m.content.includes("VESTRA_ONBOARDING_PANEL"));
-  if (old) return;
-
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("start_onboarding")
@@ -719,13 +1001,40 @@ async function setupOnboardingPanel() {
       .setStyle(ButtonStyle.Primary)
   );
 
-  await channel.send({
-    content:
-      "**VESTRA_ONBOARDING_PANEL**\n\n" +
-      "# 🖤 Ashen Warriors Onboarding\n\n" +
-      "Choose your primary language first. Vestra will use it for your onboarding and notification language.",
-    components: [row]
-  });
+  const embed = brandEmbed(
+    "🖤 Ashen Warriors Onboarding",
+    "Welcome! Vestra will walk you through a quick setup so the server works the way **you** want it to."
+  )
+    .addFields(
+      {
+        name: "🌎 1 · Primary Language",
+        value: "Choose the language Vestra should use for your notifications and translations."
+      },
+      {
+        name: "🔔 2 · Ping Preferences",
+        value: "Pick the guild reminders you actually want — including Server Tournament and Nexus Tournament alerts."
+      },
+      {
+        name: "🎮 3 · Playstyle",
+        value: "Let the guild know whether you’re Casual, Competitive, or a little of both."
+      },
+      {
+        name: "💬 4 · Social Preference",
+        value: "Choose Chatty, Quiet, or Either so people have a better idea of your vibe."
+      },
+      {
+        name: "✨ After You Finish",
+        value: "Vestra assigns your roles, saves your settings, introduces you to the guild, and unlocks the rest of Ashen."
+      }
+    )
+    .setFooter({ text: "Vestra • Ashen Warriors Onboarding" });
+
+  await upsertBotPanel(
+    CHANNELS.ONBOARDING,
+    "panel_onboarding",
+    { embeds: [embed], components: [row] },
+    "Vestra • Ashen Warriors Onboarding"
+  );
 }
 
 const preferenceMessages = {
@@ -736,20 +1045,27 @@ const preferenceMessages = {
   social: null
 };
 
-async function createPreferenceMessage(channel, marker, text, emojis) {
-  const messages = await channel.messages.fetch({ limit: 100 });
+async function createPreferencePanel(channel, stateKey, embed, emojis) {
+  const footerTag = embed.data.footer?.text || null;
 
-  let message = messages.find(
-    m => m.author.id === client.user.id && m.content.includes(marker)
+  const message = await upsertBotPanel(
+    channel,
+    stateKey,
+    { embeds: [embed] },
+    footerTag
   );
 
-  if (!message) {
-    message = await channel.send(text);
-  }
+  if (!message) return null;
 
   for (const emoji of emojis) {
     try {
-      await message.react(emoji);
+      const already = message.reactions.cache.some(
+        reaction => reaction.emoji.name === emoji
+      );
+
+      if (!already) {
+        await message.react(emoji);
+      }
     } catch (error) {
       console.error(`❌ Reaction ${emoji} failed:`, error.message);
     }
@@ -762,139 +1078,132 @@ async function setupPreferences() {
   const channel = await client.channels.fetch(CHANNELS.PREFERENCES);
   if (!channel?.isTextBased()) return;
 
-  preferenceMessages.languages = await createPreferenceMessage(
+  preferenceMessages.languages = await createPreferencePanel(
     channel,
-    "VESTRA_LANG_PREF",
-    "**VESTRA_LANG_PREF**\n\n" +
-      "# 🌎 Language Access\n" +
-      "React to every language chat you want access to.\n\n" +
-      "🇺🇸 English\n" +
-      "🇪🇸 Spanish\n" +
-      "🇫🇷 French\n" +
-      "🇩🇪 German\n" +
-      "🇵🇹 Portuguese\n" +
-      "🇯🇵 Japanese",
+    "panel_pref_languages",
+    brandEmbed(
+      "🌎 Language Access",
+      `React to **every language chat** you want access to.
+
+🇺🇸 English
+🇪🇸 Spanish
+🇫🇷 French
+🇩🇪 German
+🇵🇹 Portuguese
+🇯🇵 Japanese`
+    ).setFooter({ text: "Vestra • Language Access" }),
     Object.values(LANGUAGES).map(x => x.emoji)
   );
 
-  preferenceMessages.reminders = await createPreferenceMessage(
+  preferenceMessages.reminders = await createPreferencePanel(
     channel,
-    "VESTRA_REMINDER_PREF",
-    "**VESTRA_REMINDER_PREF**\n\n" +
-      "# 🔔 Game Reminder Pings\n" +
-      "React to every reminder you want. Vestra sends the actual alert in your primary notification language.\n\n" +
-      "🔄 Reset\n" +
-      "🌅 Morning Conquest\n" +
-      "🌌 Night Conquest\n" +
-      "🔔 Clash Opening Call\n" +
-      "⚔️ Clash Battle Call\n" +
-      "🚨 Clash Final Call\n" +
-      "⏰ Guild Clash Registration",
+    "panel_pref_reminders",
+    brandEmbed(
+      "🔔 Game & Guild Reminder Pings",
+      `React to every reminder you want. Vestra sends the actual alert in your **primary notification language**.
+
+🔄 Reset
+🌅 Morning Conquest
+🌌 Night Conquest
+🔔 Clash Opening Call
+⚔️ Clash Battle Call
+🚨 Clash Final Call
+⏰ Guild Clash Registration`
+    ).setFooter({ text: "Vestra • Game Reminder Pings" }),
     Object.values(REMINDERS).map(x => x.emoji)
   );
 
-  preferenceMessages.tournaments = await createPreferenceMessage(
+  preferenceMessages.tournaments = await createPreferencePanel(
     channel,
-    "VESTRA_TOURNAMENT_PREF",
-    "**VESTRA_TOURNAMENT_PREF**\n\n" +
-      "# 🏆 Tournament Pings\n" +
-      "React to the tournaments you want vote reminders for. Vestra sends the alerts in your primary notification language.\n\n" +
-      "⚔️ Server Tournament\n" +
-      "🌀 Nexus Tournament",
+    "panel_pref_tournaments",
+    brandEmbed(
+      "🏆 Tournament Pings",
+      `React to the tournaments you want alerts for. You’ll get the **tournament start ping** plus manual voting-round alerts in your primary language.
+
+⚔️ **Server Tournament**
+🌀 **Nexus Tournament**`
+    ).setFooter({ text: "Vestra • Tournament Pings" }),
     Object.values(TOURNAMENTS).map(x => x.emoji)
   );
 
-  preferenceMessages.playstyle = await createPreferenceMessage(
+  preferenceMessages.playstyle = await createPreferencePanel(
     channel,
-    "VESTRA_PLAYSTYLE_PREF",
-    "**VESTRA_PLAYSTYLE_PREF**\n\n" +
-      "# 🎮 Playstyle\n" +
-      "Choose one.\n\n" +
-      "🌿 Casual\n" +
-      "⚔️ Competitive\n" +
-      "🎮 Both",
+    "panel_pref_playstyle",
+    brandEmbed(
+      "🎮 Playstyle",
+      `Choose the option that fits you best.
+
+🌿 Casual
+⚔️ Competitive
+🎮 Both`
+    ).setFooter({ text: "Vestra • Playstyle" }),
     Object.values(PLAYSTYLE).map(x => x.emoji)
   );
 
-  preferenceMessages.social = await createPreferenceMessage(
+  preferenceMessages.social = await createPreferencePanel(
     channel,
-    "VESTRA_SOCIAL_PREF",
-    "**VESTRA_SOCIAL_PREF**\n\n" +
-      "# 💬 Social Preference\n" +
-      "Choose one.\n\n" +
-      "💬 Chatty\n" +
-      "🌙 Quiet\n" +
-      "✨ Either",
+    "panel_pref_social",
+    brandEmbed(
+      "💬 Social Preference",
+      `Choose how you usually like to interact in the server.
+
+💬 Chatty
+🌙 Quiet
+✨ Either`
+    ).setFooter({ text: "Vestra • Social Preference" }),
     Object.values(SOCIAL).map(x => x.emoji)
   );
 
-  const messages = await channel.messages.fetch({ limit: 100 });
-
-  const settingsOld = messages.find(
-    m => m.author.id === client.user.id && m.content.includes("VESTRA_SETTINGS_PANEL")
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("settings_open")
+      .setLabel("Open My Vestra Settings")
+      .setEmoji("✨")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("settings_card")
+      .setLabel("My Vestra Card")
+      .setEmoji("👤")
+      .setStyle(ButtonStyle.Secondary)
   );
 
-  if (!settingsOld) {
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId("settings_open")
-        .setLabel("Open My Vestra Settings")
-        .setEmoji("✨")
-        .setStyle(ButtonStyle.Primary),
+  const settingsEmbed = brandEmbed(
+    "✨ My Vestra Settings",
+    "Want everything in one place? Open your personal settings panel to manage your language access, primary notification language, pings, tournament alerts, playstyle, and social preference."
+  )
+    .addFields({
+      name: "💡 Tip",
+      value: "Reaction roles above are great for quick changes. **My Vestra Settings** is the easiest way to review everything at once."
+    })
+    .setFooter({ text: "Vestra • Personal Settings" });
 
-      new ButtonBuilder()
-        .setCustomId("settings_card")
-        .setLabel("My Vestra Card")
-        .setEmoji("👤")
-        .setStyle(ButtonStyle.Secondary)
-    );
-
-    await channel.send({
-      content:
-        "**VESTRA_SETTINGS_PANEL**\n\n" +
-        "# ✨ Vestra Settings\n" +
-        "Manage language access, your primary notification language, game pings, Server/Nexus tournament pings, playstyle, and social preference.",
-      components: [row]
-    });
-  }
+  await upsertBotPanel(
+    channel,
+    "panel_pref_settings",
+    { embeds: [settingsEmbed], components: [row] },
+    "Vestra • Personal Settings"
+  );
 
   console.log("✅ Preference panels and Vestra settings ready.");
 }
 
 async function setupHelpCenter() {
-  const channel = await client.channels.fetch(CHANNELS.HELP);
-  if (!channel?.isTextBased()) return;
-
-  const messages = await channel.messages.fetch({ limit: 50 });
-
-  const old = messages.find(
-    m => m.author.id === client.user.id && m.content.includes("VESTRA_HELP_CENTER")
-  );
-
-  if (old) {
-    console.log("✅ Help Center ready.");
-    return;
-  }
-
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("help_game")
       .setLabel("Game Help")
       .setEmoji("🎮")
       .setStyle(ButtonStyle.Primary),
-
     new ButtonBuilder()
       .setCustomId("help_team")
       .setLabel("Need a Team")
       .setEmoji("👥")
       .setStyle(ButtonStyle.Primary),
-
     new ButtonBuilder()
       .setCustomId("help_staff")
       .setLabel("Ask Staff")
       .setEmoji("🛡️")
       .setStyle(ButtonStyle.Danger),
-
     new ButtonBuilder()
       .setCustomId("help_discord")
       .setLabel("Discord Help")
@@ -908,7 +1217,6 @@ async function setupHelpCenter() {
       .setLabel("FAQ")
       .setEmoji("❓")
       .setStyle(ButtonStyle.Secondary),
-
     new ButtonBuilder()
       .setCustomId("help_guide")
       .setLabel("Server Guide")
@@ -916,26 +1224,169 @@ async function setupHelpCenter() {
       .setStyle(ButtonStyle.Secondary)
   );
 
-  await channel.send({
-    content:
-      "**VESTRA_HELP_CENTER**\n\n" +
-      "# 🖤 Ashen Help Center\n\n" +
-      "🎮 **Game Help** — Ask the community for help\n" +
-      "👥 **Need a Team** — Find people to play with\n" +
-      "🛡️ **Ask Staff** — Privately contact Ashen staff\n" +
-      "⚙️ **Discord Help** — Get help with the server\n" +
-      "❓ **FAQ** — Common questions\n" +
-      "🧭 **Server Guide** — Learn where everything is",
-    components: [row1, row2]
-  });
+  const embed = brandEmbed(
+    "🖤 Ashen Help Center",
+    "Need something? Pick the option that matches what you’re looking for and Vestra will point you in the right direction."
+  )
+    .addFields(
+      {
+        name: "🎮 Community Help",
+        value: `**Game Help** for builds, mechanics, and strategies.
+**Need a Team** when you’re looking for people to play with.`
+      },
+      {
+        name: "🛡️ Private Staff Help",
+        value: "**Ask Staff** sends a private request to Ashen leadership. Other members won’t see it."
+      },
+      {
+        name: "⚙️ Server Support",
+        value: "Use **Discord Help**, **FAQ**, or **Server Guide** when you need help navigating Ashen or Discord."
+      }
+    )
+    .setFooter({ text: "Vestra • Ashen Help Center" });
+
+  await upsertBotPanel(
+    CHANNELS.HELP,
+    "panel_help_center",
+    { embeds: [embed], components: [row1, row2] },
+    "Vestra • Ashen Help Center"
+  );
 
   console.log("✅ Help Center ready.");
 }
 
+async function setupGuildPingsPanel() {
+  const embed = brandEmbed(
+    "🔔 Ashen Guild Ping Log",
+    "This channel is Vestra’s event history — it keeps a clean record of reminders that were sent."
+  )
+    .addFields(
+      {
+        name: "🌎 Where Your Real Ping Goes",
+        value: "Subscribed members are pinged in their **primary-language General channel**, not here."
+      },
+      {
+        name: "🔕 Why This Channel Stays Quiet",
+        value: "Messages here intentionally do **not** ping roles or @everyone. They’re just the master log so staff can verify what Vestra sent."
+      }
+    )
+    .setFooter({ text: "Vestra • Guild Ping Log" });
+
+  await upsertBotPanel(
+    CHANNELS.REMINDERS,
+    "panel_guild_pings",
+    { embeds: [embed] },
+    "Vestra • Guild Ping Log"
+  );
+}
+
+async function setupIntroductionPanel() {
+  const embed = brandEmbed(
+    "👋 Welcome to the Ashen Family",
+    `This is where newly onboarded members get introduced!
+
+Say hi, welcome people in, and don’t be afraid to start a conversation. Ashen is a guild first, but it’s also a community. 🖤`
+  )
+    .addFields({
+      name: "✨ New Member Cards",
+      value: "When someone finishes onboarding, Vestra posts their language, playstyle, and social preference here so it’s a little easier to get to know them."
+    })
+    .setFooter({ text: "Vestra • Introductions" });
+
+  await upsertBotPanel(
+    CHANNELS.INTRODUCTIONS,
+    "panel_introductions",
+    { embeds: [embed] },
+    "Vestra • Introductions"
+  );
+}
+
+async function setupStaffRequestsPanel() {
+  const embed = brandEmbed(
+    "🛡️ Ashen Staff Requests",
+    "Private member requests from the Help Center appear here for Ashen leadership."
+  )
+    .addFields(
+      {
+        name: "📬 What You’ll See",
+        value: "Each request includes the member, their message, and when it was submitted."
+      },
+      {
+        name: "🔒 Privacy",
+        value: "This channel is for staff handling only. Keep member requests and sensitive details inside the staff team."
+      }
+    )
+    .setFooter({ text: "Vestra • Staff Requests" });
+
+  await upsertBotPanel(
+    CHANNELS.STAFF_REQUESTS,
+    "panel_staff_requests",
+    { embeds: [embed] },
+    "Vestra • Staff Requests"
+  );
+}
+
+async function setupGuildMembersPanel() {
+  const guild = getGuild();
+  if (!guild) return;
+
+  const channel = await findWelcomeChannelByName(guild, "guild-members");
+  if (!channel) return;
+
+  await guild.members.fetch().catch(() => {});
+
+  const humanMembers = guild.members.cache.filter(member => !member.user.bot);
+  const staffCount = humanMembers.filter(member => isStaff(member)).size;
+  const onboardedCount = humanMembers.filter(
+    member => member.roles.cache.has(ONBOARDING_COMPLETE)
+  ).size;
+
+  const embed = brandEmbed(
+    "🖤 Ashen Guild Members",
+    "A quick look at the community that makes Ashen Warriors what it is."
+  )
+    .addFields(
+      {
+        name: "👥 Members",
+        value: `${humanMembers.size}`,
+        inline: true
+      },
+      {
+        name: "🛡️ Staff",
+        value: `${staffCount}`,
+        inline: true
+      },
+      {
+        name: "✅ Onboarded",
+        value: `${onboardedCount}`,
+        inline: true
+      },
+      {
+        name: "✨ Your Vestra Card",
+        value: "Use the button below to view your own language, ping, playstyle, and social settings."
+      }
+    )
+    .setFooter({ text: "Vestra • Guild Members" })
+    .setTimestamp();
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("settings_card")
+      .setLabel("View My Vestra Card")
+      .setEmoji("👤")
+      .setStyle(ButtonStyle.Primary)
+  );
+
+  await upsertBotPanel(
+    channel,
+    "panel_guild_members",
+    { embeds: [embed], components: [row] },
+    "Vestra • Guild Members"
+  );
+}
+
 function createHelpModal(customId, title, label, placeholder) {
-  const modal = new ModalBuilder()
-    .setCustomId(customId)
-    .setTitle(title);
+  const modal = new ModalBuilder().setCustomId(customId).setTitle(title);
 
   const input = new TextInputBuilder()
     .setCustomId("help_details")
@@ -961,14 +1412,25 @@ async function createHelpThread(interaction, type, emoji, details) {
       content: "❌ Vestra couldn't access the help channel.",
       flags: MessageFlags.Ephemeral
     });
+
     return;
   }
 
+  const embed = brandEmbed(
+    `${emoji} ${type}`,
+    details
+  )
+    .addFields({
+      name: "👤 Asked by",
+      value: `${interaction.member}`,
+      inline: true
+    })
+    .setFooter({ text: "Vestra • Ashen Help" })
+    .setTimestamp();
+
   const post = await channel.send({
-    content:
-      `${emoji} **${type}**\n\n` +
-      `**From:** ${interaction.member}\n\n` +
-      `${details}`
+    embeds: [embed],
+    allowedMentions: { parse: [] }
   });
 
   const safeName = `${type}-${interaction.user.username}`
@@ -981,7 +1443,11 @@ async function createHelpThread(interaction, type, emoji, details) {
   });
 
   await thread.send({
-    content: `${interaction.member}, your help thread is ready! 🖤`
+    content: `${interaction.member}, your help thread is ready! 🖤`,
+    allowedMentions: {
+      parse: [],
+      users: [interaction.user.id]
+    }
   });
 
   await interaction.reply({
@@ -989,27 +1455,28 @@ async function createHelpThread(interaction, type, emoji, details) {
     flags: MessageFlags.Ephemeral
   });
 }
+
 // =====================================================
 // WELCOME / MEMBER CARDS
 // =====================================================
 
 function welcomeCard(member, languageName, playstyleName, socialName) {
-  return new EmbedBuilder()
-    .setTitle("🖤 A New Ashen Warrior Has Arrived")
-    .setDescription(`Welcome **${member.displayName}** to Ashen Warriors!`)
+  return brandEmbed(
+    "🖤 A New Ashen Warrior Has Arrived",
+    `Everybody welcome **${member.displayName}** to Ashen Warriors!\n\nSay hi, make them feel at home, and maybe drag them into something fun. ✨`
+  )
     .setThumbnail(member.user.displayAvatarURL({ size: 256 }))
     .addFields(
-      { name: "🌎 Language", value: languageName, inline: true },
+      { name: "🌎 Primary Language", value: languageName, inline: true },
       { name: "🎮 Playstyle", value: playstyleName, inline: true },
-      { name: "💬 Social", value: socialName, inline: true }
+      { name: "💬 Social Vibe", value: socialName, inline: true }
     )
-    .setFooter({ text: "Vestra • Ashen Warriors" })
+    .setFooter({ text: "Vestra • Welcome to Ashen Warriors" })
     .setTimestamp();
 }
 
 async function memberCardEmbed(member) {
   const primary = await inferPrimaryLanguage(member);
-
   const languageAccess = LANGUAGE_KEYS
     .filter(key => member.roles.cache.has(LANGUAGE_CHANNELS[key].role))
     .map(key => `${LANGUAGE_CHANNELS[key].emoji} ${LANGUAGE_CHANNELS[key].name}`);
@@ -1022,46 +1489,19 @@ async function memberCardEmbed(member) {
     .filter(item => member.roles.cache.has(item.role))
     .map(item => item.name);
 
-  const playstyle =
-    Object.values(PLAYSTYLE)
-      .find(item => member.roles.cache.has(item.role))
-      ?.name || "Not set";
-
-  const social =
-    Object.values(SOCIAL)
-      .find(item => member.roles.cache.has(item.role))
-      ?.name || "Not set";
+  const playstyle = Object.values(PLAYSTYLE).find(item => member.roles.cache.has(item.role))?.name || "Not set";
+  const social = Object.values(SOCIAL).find(item => member.roles.cache.has(item.role))?.name || "Not set";
 
   return new EmbedBuilder()
     .setTitle(`👤 ${member.displayName}'s Vestra Card`)
     .setThumbnail(member.user.displayAvatarURL({ size: 256 }))
     .addFields(
-      {
-        name: "🔔 Primary Notification Language",
-        value: `${LANGUAGE_CHANNELS[primary].emoji} ${LANGUAGE_CHANNELS[primary].name}`
-      },
-      {
-        name: "🌎 Language Access",
-        value: languageAccess.join(" • ") || "None"
-      },
-      {
-        name: "🎮 Playstyle",
-        value: playstyle,
-        inline: true
-      },
-      {
-        name: "💬 Social",
-        value: social,
-        inline: true
-      },
-      {
-        name: "🔔 Game Pings",
-        value: reminderNames.join(", ") || "None"
-      },
-      {
-        name: "🏆 Tournament Vote Pings",
-        value: tourneys.join(", ") || "None"
-      }
+      { name: "🔔 Primary Notification Language", value: `${LANGUAGE_CHANNELS[primary].emoji} ${LANGUAGE_CHANNELS[primary].name}` },
+      { name: "🌎 Language Access", value: languageAccess.join(" • ") || "None" },
+      { name: "🎮 Playstyle", value: playstyle, inline: true },
+      { name: "💬 Social", value: social, inline: true },
+      { name: "🔔 Game Pings", value: reminderNames.join(", ") || "None" },
+      { name: "🏆 Tournament Pings", value: tourneys.join(", ") || "None" }
     )
     .setFooter({ text: "Vestra • Ashen Warriors" });
 }
@@ -1073,87 +1513,44 @@ async function memberCardEmbed(member) {
 function settingsHomeComponents() {
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId("settings_languages")
-        .setLabel("Language Access")
-        .setEmoji("🌎")
-        .setStyle(ButtonStyle.Secondary),
-
-      new ButtonBuilder()
-        .setCustomId("settings_notify")
-        .setLabel("Notification Language")
-        .setEmoji("🔔")
-        .setStyle(ButtonStyle.Primary),
-
-      new ButtonBuilder()
-        .setCustomId("settings_reminders")
-        .setLabel("Game Pings")
-        .setEmoji("⏰")
-        .setStyle(ButtonStyle.Secondary),
-
-      new ButtonBuilder()
-        .setCustomId("settings_tournaments")
-        .setLabel("Tournament Pings")
-        .setEmoji("🏆")
-        .setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId("settings_languages").setLabel("Language Access").setEmoji("🌎").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("settings_notify").setLabel("Notification Language").setEmoji("🔔").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("settings_reminders").setLabel("Game Pings").setEmoji("⏰").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("settings_tournaments").setLabel("Tournament Pings").setEmoji("🏆").setStyle(ButtonStyle.Secondary)
     ),
-
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId("settings_playstyle")
-        .setLabel("Playstyle")
-        .setEmoji("🎮")
-        .setStyle(ButtonStyle.Secondary),
-
-      new ButtonBuilder()
-        .setCustomId("settings_social")
-        .setLabel("Social")
-        .setEmoji("💬")
-        .setStyle(ButtonStyle.Secondary),
-
-      new ButtonBuilder()
-        .setCustomId("settings_card")
-        .setLabel("My Vestra Card")
-        .setEmoji("👤")
-        .setStyle(ButtonStyle.Success)
+      new ButtonBuilder().setCustomId("settings_playstyle").setLabel("Playstyle").setEmoji("🎮").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("settings_social").setLabel("Social").setEmoji("💬").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("settings_card").setLabel("My Vestra Card").setEmoji("👤").setStyle(ButtonStyle.Success)
     )
   ];
 }
 
 function settingsHomeEmbed() {
-  return new EmbedBuilder()
-    .setTitle("✨ My Vestra Settings")
-    .setDescription(
-      "Choose what you want to manage. Your **Notification Language** controls where Vestra sends your personal event alerts."
-    )
-    .setFooter({
-      text: "Changes save immediately."
-    });
+  return brandEmbed(
+    "✨ My Vestra Settings",
+    "Customize how Vestra works for you. Your **Primary Notification Language** controls where event alerts are delivered, and the rest of your preferences can be changed anytime."
+  )
+    .addFields({
+      name: "🖤 Your Setup",
+      value: "🌎 Language Access • 🔔 Notification Language • ⏰ Game Pings • 🏆 Tournament Pings • 🎮 Playstyle • 💬 Social"
+    })
+    .setFooter({ text: "Vestra • Changes save immediately" });
 }
 
 function backButtonRow() {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("settings_back")
-      .setLabel("Back")
-      .setEmoji("↩️")
-      .setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId("settings_back").setLabel("Back").setEmoji("↩️").setStyle(ButtonStyle.Secondary)
   );
 }
 
 async function updateSingleChoiceRole(member, group, selectedKey) {
   for (const [key, item] of Object.entries(group)) {
-    if (
-      member.roles.cache.has(item.role) &&
-      key !== selectedKey
-    ) {
+    if (member.roles.cache.has(item.role) && key !== selectedKey) {
       await member.roles.remove(item.role).catch(() => {});
     }
   }
-
-  if (selectedKey && group[selectedKey]) {
-    await member.roles.add(group[selectedKey].role);
-  }
+  if (selectedKey && group[selectedKey]) await member.roles.add(group[selectedKey].role);
 }
 
 // =====================================================
@@ -1161,74 +1558,36 @@ async function updateSingleChoiceRole(member, group, selectedKey) {
 // =====================================================
 
 const translationWebhooks = new Map();
-
-const destinationChains = new Map(
-  LANGUAGE_KEYS.map(key => [key, Promise.resolve()])
-);
+const destinationChains = new Map(LANGUAGE_KEYS.map(key => [key, Promise.resolve()]));
 
 async function getTranslationWebhook(channel) {
-  if (translationWebhooks.has(channel.id)) {
-    return translationWebhooks.get(channel.id);
-  }
-
+  if (translationWebhooks.has(channel.id)) return translationWebhooks.get(channel.id);
   const webhooks = await channel.fetchWebhooks();
-
-  let webhook = webhooks.find(
-    hook =>
-      hook.owner?.id === client.user.id &&
-      hook.name === "Vestra Translator"
-  );
-
-  if (!webhook) {
-    webhook = await channel.createWebhook({
-      name: "Vestra Translator"
-    });
-  }
-
+  let webhook = webhooks.find(hook => hook.owner?.id === client.user.id && hook.name === "Vestra Translator");
+  if (!webhook) webhook = await channel.createWebhook({ name: "Vestra Translator" });
   translationWebhooks.set(channel.id, webhook);
-
   return webhook;
 }
 
 function queueDestination(languageKey, task) {
-  const previous =
-    destinationChains.get(languageKey) ||
-    Promise.resolve();
-
-  const next = previous
-    .then(task)
-    .catch(error => {
-      console.error(
-        `❌ ${languageKey} translation queue:`,
-        error.message
-      );
-    });
-
+  const previous = destinationChains.get(languageKey) || Promise.resolve();
+  const next = previous.then(task).catch(error => {
+    console.error(`❌ ${languageKey} translation queue:`, error.message);
+  });
   destinationChains.set(languageKey, next);
-
   return next;
 }
 
 async function getGroupByMessageId(messageId) {
   const result = await pool.query(
-    `SELECT
-       tm.*,
-       tg.source_message_id,
-       tg.source_channel_id,
-       tg.source_language,
-       tg.author_id,
-       tg.author_name,
-       tg.author_avatar,
-       tg.original_content,
-       tg.attachment_urls,
-       tg.reply_to_group_id
+    `SELECT tm.*, tg.source_message_id, tg.source_channel_id, tg.source_language,
+            tg.author_id, tg.author_name, tg.author_avatar, tg.original_content,
+            tg.attachment_urls, tg.reply_to_group_id
      FROM translation_messages tm
-     JOIN translation_groups tg
-       ON tg.group_id = tm.group_id
+     JOIN translation_groups tg ON tg.group_id = tm.group_id
      WHERE tm.message_id = $1`,
     [messageId]
   );
-
   return result.rows[0] || null;
 }
 
@@ -1237,170 +1596,68 @@ async function getTargetCopy(groupId, languageKey) {
     "SELECT * FROM translation_messages WHERE group_id = $1 AND language_key = $2",
     [groupId, languageKey]
   );
-
   return result.rows[0] || null;
 }
 
-async function buildReplyHeader(
-  replyToGroupId,
-  targetLanguage,
-  guildId
-) {
-  if (!replyToGroupId) {
-    return "";
-  }
-
-  const copy = await getTargetCopy(
-    replyToGroupId,
-    targetLanguage
-  );
-
-  if (!copy) {
-    return "↪️ **Reply**\n";
-  }
-
-  const jump =
-    `https://discord.com/channels/${guildId}/${copy.channel_id}/${copy.message_id}`;
-
+async function buildReplyHeader(replyToGroupId, targetLanguage, guildId) {
+  if (!replyToGroupId) return "";
+  const copy = await getTargetCopy(replyToGroupId, targetLanguage);
+  if (!copy) return "↪️ **Reply**\n";
+  const jump = `https://discord.com/channels/${guildId}/${copy.channel_id}/${copy.message_id}`;
   return `↪️ [**Replying to this message**](<${jump}>)\n`;
 }
 
 async function reactionSummary(groupId) {
   const result = await pool.query(
-    `SELECT
-       emoji_key,
-       COUNT(DISTINCT user_id)::int AS count
+    `SELECT emoji_key, COUNT(DISTINCT user_id)::int AS count
      FROM message_reactions
      WHERE group_id = $1
      GROUP BY emoji_key
      ORDER BY count DESC, emoji_key ASC`,
     [groupId]
   );
-
-  if (!result.rows.length) {
-    return "";
-  }
-
-  return (
-    `\n\n—\n` +
-    result.rows
-      .map(row => `${row.emoji_key} ${row.count}`)
-      .join("   ")
-  );
+  if (!result.rows.length) return "";
+  return `\n\n—\n${result.rows.map(row => `${row.emoji_key} ${row.count}`).join("   ")}`;
 }
 
-async function editTranslatedCopy(
-  row,
-  content,
-  allowedMentions = { parse: [] }
-) {
-  const channel = await client.channels
-    .fetch(row.channel_id)
-    .catch(() => null);
-
-  if (!channel?.isTextBased()) {
-    return;
-  }
-
+async function editTranslatedCopy(row, content, allowedMentions = { parse: [] }) {
+  const channel = await client.channels.fetch(row.channel_id).catch(() => null);
+  if (!channel?.isTextBased()) return;
   const webhook = await getTranslationWebhook(channel);
-
   try {
-    await webhook.editMessage(
-      row.message_id,
-      {
-        content: limitText(content, 1990),
-        allowedMentions
-      }
-    );
+    await webhook.editMessage(row.message_id, { content: limitText(content, 1990), allowedMentions });
   } catch (error) {
     if (error?.code === 10008) {
-      await pool.query(
-        "DELETE FROM translation_messages WHERE message_id = $1",
-        [row.message_id]
-      );
+      await pool.query("DELETE FROM translation_messages WHERE message_id = $1", [row.message_id]);
     } else {
       throw error;
     }
   }
 }
 
-async function createTranslatedCopy(
-  message,
-  groupId,
-  sourceKey,
-  targetKey,
-  replyToGroupId
-) {
+async function createTranslatedCopy(message, groupId, sourceKey, targetKey, replyToGroupId) {
   const targetInfo = LANGUAGE_CHANNELS[targetKey];
   const sourceInfo = LANGUAGE_CHANNELS[sourceKey];
-
-  const targetChannel = await client.channels.fetch(
-    targetInfo.channel
-  );
-
-  if (!targetChannel?.isTextBased()) {
-    throw new Error(
-      `${targetInfo.name} channel unavailable`
-    );
-  }
+  const targetChannel = await client.channels.fetch(targetInfo.channel);
+  if (!targetChannel?.isTextBased()) throw new Error(`${targetInfo.name} channel unavailable`);
 
   let translated = message.content || "";
-
   if (message.content) {
-    translated = await googleTranslate(
-      message.content,
-      targetInfo.code,
-      sourceInfo.code
-    );
+    translated = await googleTranslate(message.content, targetInfo.code, sourceInfo.code);
   }
 
-  const replyHeader = await buildReplyHeader(
-    replyToGroupId,
-    targetKey,
-    message.guild.id
-  );
-
-  const attachments = formatAttachments(
-    message.attachments
-  );
-
-  let base = [
-    replyHeader.trimEnd(),
-    translated,
-    attachments
-  ]
-    .filter(Boolean)
-    .join("\n");
-
+  const replyHeader = await buildReplyHeader(replyToGroupId, targetKey, message.guild.id);
+  const attachments = formatAttachments(message.attachments);
+  let base = [replyHeader.trimEnd(), translated, attachments].filter(Boolean).join("\n");
   base = limitText(base, 1850);
 
-  const webhook = await getTranslationWebhook(
-    targetChannel
-  );
-
-  const mentions = getMentionIds(
-    message.content || ""
-  );
-
-  const summary = await reactionSummary(
-    groupId
-  );
-
+  const webhook = await getTranslationWebhook(targetChannel);
+  const mentions = getMentionIds(message.content || "");
+  const summary = await reactionSummary(groupId);
   const sent = await webhook.send({
     content: `${base}${summary}`,
-
-    username:
-      `${safeDisplayName(
-        message.member,
-        message.author
-      )} • ${sourceInfo.emoji}`,
-
-    avatarURL:
-      message.author.displayAvatarURL({
-        extension: "png",
-        size: 256
-      }),
-
+    username: `${safeDisplayName(message.member, message.author)} • ${sourceInfo.emoji}`,
+    avatarURL: message.author.displayAvatarURL({ extension: "png", size: 256 }),
     allowedMentions: {
       parse: [],
       users: mentions.users,
@@ -1409,117 +1666,47 @@ async function createTranslatedCopy(
   });
 
   await pool.query(
-    `INSERT INTO translation_messages(
-       message_id,
-       group_id,
-       channel_id,
-       language_key,
-       is_source,
-       base_content,
-       webhook_id
-     )
-     VALUES(
-       $1,
-       $2,
-       $3,
-       $4,
-       FALSE,
-       $5,
-       $6
-     )
-     ON CONFLICT(group_id, language_key)
-     DO UPDATE SET
+    `INSERT INTO translation_messages(message_id, group_id, channel_id, language_key, is_source, base_content, webhook_id)
+     VALUES($1, $2, $3, $4, FALSE, $5, $6)
+     ON CONFLICT(group_id, language_key) DO UPDATE SET
        message_id = EXCLUDED.message_id,
        channel_id = EXCLUDED.channel_id,
        base_content = EXCLUDED.base_content,
        webhook_id = EXCLUDED.webhook_id`,
-    [
-      sent.id,
-      groupId,
-      targetInfo.channel,
-      targetKey,
-      base,
-      webhook.id
-    ]
+    [sent.id, groupId, targetInfo.channel, targetKey, base, webhook.id]
   );
 
-  console.log(
-    `✅ Google translation ${sourceInfo.name} → ${targetInfo.name}: ${message.author.username}`
-  );
+  console.log(`✅ Google translation ${sourceInfo.name} → ${targetInfo.name}: ${message.author.username}`);
 }
+
 async function handleGeneralMessageCreate(message) {
   const sourceEntry = languageByChannel(message.channel.id);
-
-  if (!sourceEntry) {
-    return;
-  }
-
+  if (!sourceEntry) return;
   const [sourceKey] = sourceEntry;
-
-  if (
-    !message.content &&
-    message.attachments.size === 0
-  ) {
-    return;
-  }
+  if (!message.content && message.attachments.size === 0) return;
 
   let replyToGroupId = null;
-
   if (message.reference?.messageId) {
-    const referenced = await getGroupByMessageId(
-      message.reference.messageId
-    ).catch(() => null);
-
-    replyToGroupId =
-      referenced?.group_id ||
-      null;
+    const referenced = await getGroupByMessageId(message.reference.messageId).catch(() => null);
+    replyToGroupId = referenced?.group_id || null;
   }
 
-  const attachmentURLs =
-    [...message.attachments.values()]
-      .map(a => a.url);
+  const attachmentURLs = [...message.attachments.values()].map(a => a.url);
 
   await pool.query(
     `INSERT INTO translation_groups(
-       group_id,
-       source_message_id,
-       source_channel_id,
-       source_language,
-       author_id,
-       author_name,
-       author_avatar,
-       original_content,
-       attachment_urls,
-       reply_to_group_id
-     )
-     VALUES(
-       $1,
-       $2,
-       $3,
-       $4,
-       $5,
-       $6,
-       $7,
-       $8,
-       $9::jsonb,
-       $10
-     )
-     ON CONFLICT(group_id)
-     DO NOTHING`,
+       group_id, source_message_id, source_channel_id, source_language,
+       author_id, author_name, author_avatar, original_content, attachment_urls, reply_to_group_id
+     ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)
+     ON CONFLICT(group_id) DO NOTHING`,
     [
       message.id,
       message.id,
       message.channel.id,
       sourceKey,
       message.author.id,
-      safeDisplayName(
-        message.member,
-        message.author
-      ),
-      message.author.displayAvatarURL({
-        extension: "png",
-        size: 256
-      }),
+      safeDisplayName(message.member, message.author),
+      message.author.displayAvatarURL({ extension: "png", size: 256 }),
       message.content || "",
       JSON.stringify(attachmentURLs),
       replyToGroupId
@@ -1527,169 +1714,56 @@ async function handleGeneralMessageCreate(message) {
   );
 
   await pool.query(
-    `INSERT INTO translation_messages(
-       message_id,
-       group_id,
-       channel_id,
-       language_key,
-       is_source,
-       base_content
-     )
-     VALUES(
-       $1,
-       $2,
-       $3,
-       $4,
-       TRUE,
-       $5
-     )
-     ON CONFLICT(message_id)
-     DO NOTHING`,
-    [
-      message.id,
-      message.id,
-      message.channel.id,
-      sourceKey,
-      message.content || ""
-    ]
+    `INSERT INTO translation_messages(message_id, group_id, channel_id, language_key, is_source, base_content)
+     VALUES($1,$2,$3,$4,TRUE,$5)
+     ON CONFLICT(message_id) DO NOTHING`,
+    [message.id, message.id, message.channel.id, sourceKey, message.content || ""]
   );
 
   for (const targetKey of LANGUAGE_KEYS) {
-    if (targetKey === sourceKey) {
-      continue;
-    }
-
-    queueDestination(
-      targetKey,
-      () =>
-        createTranslatedCopy(
-          message,
-          message.id,
-          sourceKey,
-          targetKey,
-          replyToGroupId
-        )
-    );
+    if (targetKey === sourceKey) continue;
+    queueDestination(targetKey, () => createTranslatedCopy(message, message.id, sourceKey, targetKey, replyToGroupId));
   }
 }
 
 async function handleGeneralMessageUpdate(message) {
-  const mapping = await getGroupByMessageId(
-    message.id
-  );
-
-  if (!mapping?.is_source) {
-    return;
-  }
+  const mapping = await getGroupByMessageId(message.id);
+  if (!mapping?.is_source) return;
 
   const sourceKey = mapping.source_language;
-
-  const attachmentURLs =
-    [...message.attachments.values()]
-      .map(a => a.url);
-
+  const attachmentURLs = [...message.attachments.values()].map(a => a.url);
   await pool.query(
     `UPDATE translation_groups
-     SET
-       original_content = $2,
-       attachment_urls = $3::jsonb
+     SET original_content = $2, attachment_urls = $3::jsonb
      WHERE group_id = $1`,
-    [
-      mapping.group_id,
-      message.content || "",
-      JSON.stringify(attachmentURLs)
-    ]
+    [mapping.group_id, message.content || "", JSON.stringify(attachmentURLs)]
   );
 
   const copies = await pool.query(
     "SELECT * FROM translation_messages WHERE group_id = $1 AND is_source = FALSE",
     [mapping.group_id]
   );
-
-  const summary = await reactionSummary(
-    mapping.group_id
-  );
+  const summary = await reactionSummary(mapping.group_id);
 
   for (const copy of copies.rows) {
-    queueDestination(
-      copy.language_key,
-      async () => {
-        const targetInfo =
-          LANGUAGE_CHANNELS[
-            copy.language_key
-          ];
+    queueDestination(copy.language_key, async () => {
+      const targetInfo = LANGUAGE_CHANNELS[copy.language_key];
+      const sourceInfo = LANGUAGE_CHANNELS[sourceKey];
+      let translated = message.content || "";
+      if (message.content) translated = await googleTranslate(message.content, targetInfo.code, sourceInfo.code);
+      const replyHeader = await buildReplyHeader(mapping.reply_to_group_id, copy.language_key, message.guild.id);
+      const attachments = formatAttachments(message.attachments);
+      const base = limitText([replyHeader.trimEnd(), translated, attachments].filter(Boolean).join("\n"), 1850);
+      const mentions = getMentionIds(message.content || "");
 
-        const sourceInfo =
-          LANGUAGE_CHANNELS[
-            sourceKey
-          ];
-
-        let translated =
-          message.content || "";
-
-        if (message.content) {
-          translated =
-            await googleTranslate(
-              message.content,
-              targetInfo.code,
-              sourceInfo.code
-            );
-        }
-
-        const replyHeader =
-          await buildReplyHeader(
-            mapping.reply_to_group_id,
-            copy.language_key,
-            message.guild.id
-          );
-
-        const attachments =
-          formatAttachments(
-            message.attachments
-          );
-
-        const base =
-          limitText(
-            [
-              replyHeader.trimEnd(),
-              translated,
-              attachments
-            ]
-              .filter(Boolean)
-              .join("\n"),
-            1850
-          );
-
-        const mentions =
-          getMentionIds(
-            message.content ||
-            ""
-          );
-
-        await pool.query(
-          "UPDATE translation_messages SET base_content = $2 WHERE message_id = $1",
-          [
-            copy.message_id,
-            base
-          ]
-        );
-
-        await editTranslatedCopy(
-          copy,
-          `${base}${summary}`,
-          {
-            parse: [],
-            users: mentions.users,
-            roles: mentions.roles
-          }
-        );
-      }
-    );
+      await pool.query("UPDATE translation_messages SET base_content = $2 WHERE message_id = $1", [copy.message_id, base]);
+      await editTranslatedCopy(copy, `${base}${summary}`, {
+        parse: [], users: mentions.users, roles: mentions.roles
+      });
+    });
   }
 
-  console.log(
-    `✏️ Synced edit across translations: ${message.id}`
-  );
+  console.log(`✏️ Synced edit across translations: ${message.id}`);
 }
 
 async function deleteTranslatedGroup(groupId) {
@@ -1697,51 +1771,26 @@ async function deleteTranslatedGroup(groupId) {
     "SELECT * FROM translation_messages WHERE group_id = $1 AND is_source = FALSE",
     [groupId]
   );
-
   for (const row of copies.rows) {
-    const channel = await client.channels
-      .fetch(row.channel_id)
-      .catch(() => null);
-
-    if (!channel?.isTextBased()) {
-      continue;
-    }
-
+    const channel = await client.channels.fetch(row.channel_id).catch(() => null);
+    if (!channel?.isTextBased()) continue;
     try {
-      const webhook =
-        await getTranslationWebhook(channel);
-
-      await webhook.deleteMessage(
-        row.message_id
-      );
+      const webhook = await getTranslationWebhook(channel);
+      await webhook.deleteMessage(row.message_id);
     } catch {}
   }
-
-  await pool.query(
-    "DELETE FROM translation_groups WHERE group_id = $1",
-    [groupId]
-  );
+  await pool.query("DELETE FROM translation_groups WHERE group_id = $1", [groupId]);
 }
 
 async function updateReactionSummaries(groupId) {
-  const summary =
-    await reactionSummary(groupId);
-
-  const copies =
-    await pool.query(
-      "SELECT * FROM translation_messages WHERE group_id = $1 AND is_source = FALSE",
-      [groupId]
-    );
-
+  const summary = await reactionSummary(groupId);
+  const copies = await pool.query(
+    "SELECT * FROM translation_messages WHERE group_id = $1 AND is_source = FALSE",
+    [groupId]
+  );
   for (const row of copies.rows) {
-    await editTranslatedCopy(
-      row,
-      `${row.base_content || ""}${summary}`
-    ).catch(error => {
-      console.error(
-        "❌ Reaction summary update:",
-        error.message
-      );
+    await editTranslatedCopy(row, `${row.base_content || ""}${summary}`).catch(error => {
+      console.error("❌ Reaction summary update:", error.message);
     });
   }
 }
@@ -1753,10 +1802,20 @@ async function updateReactionSummaries(groupId) {
 const SOCIAL_TRANSLATE_EMOJI = "🌐";
 const SOCIAL_TRANSLATION_DELETE_MS = 30_000;
 
-function isSocialChannel(channel) {
+function isReactionTranslateChannel(channel) {
+  if (!channel?.isTextBased?.()) return false;
+
+  const automaticLanguageChannel = Object.values(LANGUAGE_CHANNELS)
+    .some(info => info.channel === channel.id);
+
+  if (automaticLanguageChannel) return false;
+
   return (
     SOCIAL_CHANNELS.has(channel.id) ||
-    channel.parentId === SOCIAL_CATEGORY_ID
+    channel.parentId === SOCIAL_CATEGORY_ID ||
+    channel.parentId === IMPORTANT_CATEGORY_ID ||
+    channel.parentId === WELCOME_CATEGORY_ID ||
+    EXTRA_REACTION_TRANSLATION_CHANNELS.has(channel.id)
   );
 }
 
@@ -1768,456 +1827,185 @@ async function cleanupLegacySocialCompanions() {
   let removed = 0;
 
   for (const row of result.rows) {
-    const channel = await client.channels
-      .fetch(row.channel_id)
-      .catch(() => null);
+    const channel = await client.channels.fetch(row.channel_id).catch(() => null);
+    if (!channel?.isTextBased()) continue;
 
-    if (!channel?.isTextBased()) {
-      continue;
-    }
+    const companion = await channel.messages.fetch(row.companion_message_id).catch(() => null);
+    if (!companion) continue;
 
-    const companion =
-      await channel.messages
-        .fetch(row.companion_message_id)
-        .catch(() => null);
-
-    if (!companion) {
-      continue;
-    }
-
-    await companion.delete()
-      .catch(() => {});
-
+    await companion.delete().catch(() => {});
     removed++;
   }
 
-  await pool.query(
-    "DELETE FROM social_companions"
-  );
+  await pool.query("DELETE FROM social_companions");
 
   if (result.rows.length) {
-    console.log(
-      `🧹 Removed ${removed} legacy Social Translate companion message(s).`
-    );
+    console.log(`🧹 Removed ${removed} legacy Social Translate companion message(s).`);
   }
 }
 
-async function removeSocialTranslationReaction(
-  reaction,
-  userId
-) {
+async function removeSocialTranslationReaction(reaction, userId) {
   const guild = reaction.message.guild;
+  const me = guild?.members?.me || (guild ? await guild.members.fetchMe().catch(() => null) : null);
+  const canManageMessages = me
+    ? reaction.message.channel.permissionsFor(me)?.has(PermissionFlagsBits.ManageMessages)
+    : false;
 
-  const me =
-    guild?.members?.me ||
-    (
-      guild
-        ? await guild.members.fetchMe().catch(() => null)
-        : null
-    );
-
-  const canManageMessages =
-    me
-      ? reaction.message.channel
-          .permissionsFor(me)
-          ?.has(
-            PermissionFlagsBits.ManageMessages
-          )
-      : false;
-
-  if (!canManageMessages) {
-    return;
-  }
-
-  await reaction.users
-    .remove(userId)
-    .catch(() => {});
+  if (!canManageMessages) return;
+  await reaction.users.remove(userId).catch(() => {});
 }
 
-async function sendTemporarySocialNotice(
-  message,
-  content,
-  deleteAfterMs = 10_000
-) {
+async function sendTemporarySocialNotice(message, content, deleteAfterMs = 10_000) {
   const notice = await message.reply({
     content,
-    allowedMentions: {
-      parse: [],
-      repliedUser: false
-    }
+    allowedMentions: { parse: [], repliedUser: false }
   }).catch(() => null);
 
-  if (!notice) {
-    return;
-  }
+  if (!notice) return;
 
   setTimeout(() => {
-    void notice.delete()
-      .catch(() => {});
+    void notice.delete().catch(() => {});
   }, deleteAfterMs);
 }
 
-async function handleSocialTranslationReaction(
-  reaction,
-  user
-) {
+async function handleSocialTranslationReaction(reaction, user) {
   const message = reaction.message;
 
-  if (
-    !message.guild ||
-    message.author?.bot ||
-    message.webhookId
-  ) {
-    return false;
-  }
+  if (!message.guild || message.author?.bot || message.webhookId) return false;
+  if (!isReactionTranslateChannel(message.channel)) return false;
+  if (emojiKey(reaction.emoji) !== SOCIAL_TRANSLATE_EMOJI) return false;
 
-  if (!isSocialChannel(message.channel)) {
-    return false;
-  }
+  await removeSocialTranslationReaction(reaction, user.id);
 
-  if (
-    emojiKey(reaction.emoji) !==
-    SOCIAL_TRANSLATE_EMOJI
-  ) {
-    return false;
-  }
-
-  await removeSocialTranslationReaction(
-    reaction,
-    user.id
-  );
-
-  if (
-    !message.content ||
-    !hasTranslatableText(message.content)
-  ) {
+  if (!message.content || !hasTranslatableText(message.content)) {
     await sendTemporarySocialNotice(
       message,
       "🌐 Vestra can only translate messages that contain text."
     );
-
     return true;
   }
 
-  const member =
-    await message.guild.members
-      .fetch(user.id)
-      .catch(() => null);
+  const member = await message.guild.members.fetch(user.id).catch(() => null);
+  if (!member) return true;
 
-  if (!member) {
-    return true;
-  }
-
-  const targetKey =
-    await inferPrimaryLanguage(member);
-
-  const target =
-    LANGUAGE_CHANNELS[targetKey];
+  const targetKey = await inferPrimaryLanguage(member);
+  const target = LANGUAGE_CHANNELS[targetKey];
 
   let translated;
-
   try {
-    translated =
-      await googleTranslate(
-        message.content,
-        target.code,
-        null
-      );
+    translated = await googleTranslate(message.content, target.code, null);
   } catch (error) {
-    console.error(
-      "❌ Social reaction translation:",
-      error.message
-    );
-
+    console.error("❌ Reaction translation:", error.message);
     await sendTemporarySocialNotice(
       message,
       "🌐 Translation is temporarily unavailable. Please try again."
     );
-
     return true;
   }
 
-  const requesterName =
-    safeDisplayName(
-      member,
-      user
-    );
+  const requesterName = safeDisplayName(member, user);
 
-  const embed =
-    new EmbedBuilder()
-      .setAuthor({
-        name:
-          safeDisplayName(
-            message.member,
-            message.author
-          ),
-
-        iconURL:
-          message.author.displayAvatarURL({
-            size: 128
-          })
-      })
-      .setTitle(
-        `${target.emoji} Translation → ${target.name}`
-      )
-      .setDescription(
-        limitText(
-          translated,
-          3900
-        )
-      )
-      .setFooter({
-        text:
-          `Requested by ${requesterName} • Auto-deletes in 30s • Vestra`
-      });
-
-  const translatedReply =
-    await message.reply({
-      embeds: [embed],
-
-      allowedMentions: {
-        parse: [],
-        repliedUser: false
-      }
-    }).catch(error => {
-      console.error(
-        "❌ Social translation reply:",
-        error.message
-      );
-
-      return null;
+  const embed = new EmbedBuilder()
+    .setAuthor({
+      name: safeDisplayName(message.member, message.author),
+      iconURL: message.author.displayAvatarURL({ size: 128 })
+    })
+    .setTitle(`${target.emoji} Translation → ${target.name}`)
+    .setDescription(limitText(translated, 3900))
+    .setFooter({
+      text: `Requested by ${requesterName} • Auto-deletes in 30s • Vestra`
     });
+
+  const translatedReply = await message.reply({
+    embeds: [embed],
+    allowedMentions: { parse: [], repliedUser: false }
+  }).catch(error => {
+    console.error("❌ Reaction translation reply:", error.message);
+    return null;
+  });
 
   if (translatedReply) {
     setTimeout(() => {
-      void translatedReply
-        .delete()
-        .catch(() => {});
+      void translatedReply.delete().catch(() => {});
     }, SOCIAL_TRANSLATION_DELETE_MS);
   }
 
   return true;
 }
+
 // =====================================================
 // COMMUNITY HIGHLIGHTS / STARBOARD
 // =====================================================
 
 function reactionStringFromMessage(message) {
-  const entries =
-    [...message.reactions.cache.values()]
-      .map(reaction => ({
-        emoji:
-          emojiKey(
-            reaction.emoji
-          ),
-
-        count:
-          reaction.count ||
-          0
-      }))
-      .filter(x => x.count > 0)
-      .sort((a, b) => b.count - a.count);
-
-  return entries
-    .map(x => `${x.emoji} ${x.count}`)
-    .join("   ");
+  const entries = [...message.reactions.cache.values()]
+    .map(reaction => ({ emoji: emojiKey(reaction.emoji), count: reaction.count || 0 }))
+    .filter(x => x.count > 0)
+    .sort((a, b) => b.count - a.count);
+  return entries.map(x => `${x.emoji} ${x.count}`).join("   ");
 }
 
-async function upsertHighlight(
-  sourceMessage,
-  score,
-  reactionText = ""
-) {
-  if (
-    !sourceMessage ||
-    sourceMessage.author?.bot
-  ) {
-    return;
-  }
+async function upsertHighlight(sourceMessage, score, reactionText = "") {
+  if (!sourceMessage || sourceMessage.author?.bot) return;
+  if (sourceMessage.channel.id === CHANNELS.HIGHLIGHTS) return;
 
-  if (
-    sourceMessage.channel.id ===
-    CHANNELS.HIGHLIGHTS
-  ) {
-    return;
-  }
-
-  const highlightChannel =
-    await client.channels
-      .fetch(CHANNELS.HIGHLIGHTS)
-      .catch(() => null);
-
-  if (!highlightChannel?.isTextBased()) {
-    return;
-  }
+  const highlightChannel = await client.channels.fetch(CHANNELS.HIGHLIGHTS).catch(() => null);
+  if (!highlightChannel?.isTextBased()) return;
 
   const existing = await pool.query(
     "SELECT * FROM highlights WHERE source_message_id = $1",
     [sourceMessage.id]
   );
 
-  const firstImage =
-    [...sourceMessage.attachments.values()]
-      .find(
-        a =>
-          a.contentType
-            ?.startsWith("image/")
-      );
+  const firstImage = [...sourceMessage.attachments.values()].find(a => a.contentType?.startsWith("image/"));
+  const embed = new EmbedBuilder()
+    .setAuthor({
+      name: safeDisplayName(sourceMessage.member, sourceMessage.author),
+      iconURL: sourceMessage.author.displayAvatarURL({ size: 128 })
+    })
+    .setDescription(limitText(sourceMessage.content || "*(attachment / media post)*", 3500))
+    .addFields(
+      { name: "✨ Community Love", value: reactionText || `${score} reactions`, inline: true },
+      { name: "🔗 Original", value: `[Jump to message](${sourceMessage.url})`, inline: true }
+    )
+    .setFooter({ text: "Ashen Community Highlights • Vestra" })
+    .setTimestamp(sourceMessage.createdAt);
 
-  const embed =
-    new EmbedBuilder()
-      .setAuthor({
-        name:
-          safeDisplayName(
-            sourceMessage.member,
-            sourceMessage.author
-          ),
-
-        iconURL:
-          sourceMessage.author
-            .displayAvatarURL({
-              size: 128
-            })
-      })
-      .setDescription(
-        limitText(
-          sourceMessage.content ||
-            "*(attachment / media post)*",
-          3500
-        )
-      )
-      .addFields(
-        {
-          name:
-            "✨ Community Love",
-
-          value:
-            reactionText ||
-            `${score} reactions`,
-
-          inline:
-            true
-        },
-
-        {
-          name:
-            "🔗 Original",
-
-          value:
-            `[Jump to message](${sourceMessage.url})`,
-
-          inline:
-            true
-        }
-      )
-      .setFooter({
-        text:
-          "Ashen Community Highlights • Vestra"
-      })
-      .setTimestamp(
-        sourceMessage.createdAt
-      );
-
-  if (firstImage) {
-    embed.setImage(firstImage.url);
-  }
+  if (firstImage) embed.setImage(firstImage.url);
 
   if (existing.rows[0]) {
-    const highlight =
-      await highlightChannel.messages
-        .fetch(
-          existing.rows[0]
-            .highlight_message_id
-        )
-        .catch(() => null);
-
+    const highlight = await highlightChannel.messages.fetch(existing.rows[0].highlight_message_id).catch(() => null);
     if (highlight) {
-      await highlight.edit({
-        embeds: [embed]
-      }).catch(() => {});
-
-      await pool.query(
-        "UPDATE highlights SET score = $2 WHERE source_message_id = $1",
-        [
-          sourceMessage.id,
-          score
-        ]
-      );
-
+      await highlight.edit({ embeds: [embed] }).catch(() => {});
+      await pool.query("UPDATE highlights SET score = $2 WHERE source_message_id = $1", [sourceMessage.id, score]);
       return;
     }
   }
 
-  const sent =
-    await highlightChannel.send({
-      embeds: [embed]
-    });
-
+  const sent = await highlightChannel.send({ embeds: [embed] });
   await pool.query(
-    `INSERT INTO highlights(
-       source_message_id,
-       highlight_message_id,
-       source_channel_id,
-       score
-     )
+    `INSERT INTO highlights(source_message_id, highlight_message_id, source_channel_id, score)
      VALUES($1,$2,$3,$4)
-     ON CONFLICT(source_message_id)
-     DO UPDATE SET
-       highlight_message_id = EXCLUDED.highlight_message_id,
-       score = EXCLUDED.score`,
-    [
-      sourceMessage.id,
-      sent.id,
-      sourceMessage.channel.id,
-      score
-    ]
+     ON CONFLICT(source_message_id) DO UPDATE SET highlight_message_id = EXCLUDED.highlight_message_id, score = EXCLUDED.score`,
+    [sourceMessage.id, sent.id, sourceMessage.channel.id, score]
   );
 }
 
-async function removeHighlight(
-  sourceMessageId
-) {
-  const result = await pool.query(
-    "SELECT * FROM highlights WHERE source_message_id = $1",
-    [sourceMessageId]
-  );
-
+async function removeHighlight(sourceMessageId) {
+  const result = await pool.query("SELECT * FROM highlights WHERE source_message_id = $1", [sourceMessageId]);
   const row = result.rows[0];
-
-  if (!row) {
-    return;
-  }
-
-  const channel =
-    await client.channels
-      .fetch(CHANNELS.HIGHLIGHTS)
-      .catch(() => null);
-
+  if (!row) return;
+  const channel = await client.channels.fetch(CHANNELS.HIGHLIGHTS).catch(() => null);
   if (channel?.isTextBased()) {
-    const message =
-      await channel.messages
-        .fetch(
-          row.highlight_message_id
-        )
-        .catch(() => null);
-
-    if (message) {
-      await message.delete()
-        .catch(() => {});
-    }
+    const message = await channel.messages.fetch(row.highlight_message_id).catch(() => null);
+    if (message) await message.delete().catch(() => {});
   }
-
-  await pool.query(
-    "DELETE FROM highlights WHERE source_message_id = $1",
-    [sourceMessageId]
-  );
+  await pool.query("DELETE FROM highlights WHERE source_message_id = $1", [sourceMessageId]);
 }
 
 async function maybeHighlightGroup(groupId) {
   const reactions = await pool.query(
-    `SELECT
-       emoji_key,
-       COUNT(DISTINCT user_id)::int AS count
+    `SELECT emoji_key, COUNT(DISTINCT user_id)::int AS count
      FROM message_reactions
      WHERE group_id = $1
      GROUP BY emoji_key
@@ -2225,294 +2013,86 @@ async function maybeHighlightGroup(groupId) {
     [groupId]
   );
 
-  const total =
-    reactions.rows.reduce(
-      (sum, row) =>
-        sum +
-        Number(row.count || 0),
-      0
-    );
+  const total = reactions.rows.reduce((sum, row) => sum + Number(row.count || 0), 0);
+  if (total < HIGHLIGHT_REACTION_THRESHOLD) return;
 
-  if (
-    total <
-    HIGHLIGHT_REACTION_THRESHOLD
-  ) {
-    return;
-  }
-
-  const reactionText =
-    reactions.rows
-      .map(
-        row =>
-          `${row.emoji_key} ${row.count}`
-      )
-      .join("   ");
-
-  const group = await pool.query(
-    "SELECT * FROM translation_groups WHERE group_id = $1",
-    [groupId]
-  );
-
-  const row =
-    group.rows[0];
-
-  if (!row) {
-    return;
-  }
-
-  const channel =
-    await client.channels
-      .fetch(
-        row.source_channel_id
-      )
-      .catch(() => null);
-
-  if (!channel?.isTextBased()) {
-    return;
-  }
-
-  const source =
-    await channel.messages
-      .fetch(
-        row.source_message_id
-      )
-      .catch(() => null);
-
-  if (!source) {
-    return;
-  }
-
-  await upsertHighlight(
-    source,
-    total,
-    reactionText
-  );
+  const reactionText = reactions.rows.map(row => `${row.emoji_key} ${row.count}`).join("   ");
+  const group = await pool.query("SELECT * FROM translation_groups WHERE group_id = $1", [groupId]);
+  const row = group.rows[0];
+  if (!row) return;
+  const channel = await client.channels.fetch(row.source_channel_id).catch(() => null);
+  if (!channel?.isTextBased()) return;
+  const source = await channel.messages.fetch(row.source_message_id).catch(() => null);
+  if (!source) return;
+  await upsertHighlight(source, total, reactionText);
 }
 
 async function maybeHighlightNative(message) {
-  if (
-    !message ||
-    message.author?.bot
-  ) {
-    return;
-  }
-
-  const total =
-    [...message.reactions.cache.values()]
-      .reduce(
-        (sum, r) =>
-          sum +
-          (r.count || 0),
-        0
-      );
-
-  if (
-    total <
-    HIGHLIGHT_REACTION_THRESHOLD
-  ) {
-    return;
-  }
-
-  await upsertHighlight(
-    message,
-    total,
-    reactionStringFromMessage(message)
-  );
+  if (!message || message.author?.bot) return;
+  const total = [...message.reactions.cache.values()].reduce((sum, r) => sum + (r.count || 0), 0);
+  if (total < HIGHLIGHT_REACTION_THRESHOLD) return;
+  await upsertHighlight(message, total, reactionStringFromMessage(message));
 }
 
 // =====================================================
 // DAYLIGHT SAVING + SCHEDULES
 // =====================================================
 
-function nthWeekdayOfMonth(
-  year,
-  monthIndex,
-  weekday,
-  nth
-) {
-  const first =
-    new Date(
-      Date.UTC(
-        year,
-        monthIndex,
-        1
-      )
-    );
-
-  const firstWeekday =
-    first.getUTCDay();
-
-  const offset =
-    (
-      weekday -
-      firstWeekday +
-      7
-    ) % 7;
-
-  return (
-    1 +
-    offset +
-    (nth - 1) * 7
-  );
+function nthWeekdayOfMonth(year, monthIndex, weekday, nth) {
+  const first = new Date(Date.UTC(year, monthIndex, 1));
+  const firstWeekday = first.getUTCDay();
+  const offset = (weekday - firstWeekday + 7) % 7;
+  return 1 + offset + (nth - 1) * 7;
 }
 
-function isCentralDSTDate(
-  year,
-  month,
-  day
-) {
-  const marchSecondSunday =
-    nthWeekdayOfMonth(
-      year,
-      2,
-      0,
-      2
-    );
-
-  const novemberFirstSunday =
-    nthWeekdayOfMonth(
-      year,
-      10,
-      0,
-      1
-    );
-
-  if (
-    month < 3 ||
-    month > 11
-  ) {
-    return false;
-  }
-
-  if (
-    month > 3 &&
-    month < 11
-  ) {
-    return true;
-  }
-
-  if (month === 3) {
-    return (
-      day >=
-      marchSecondSunday
-    );
-  }
-
-  if (month === 11) {
-    return (
-      day <
-      novemberFirstSunday
-    );
-  }
-
+function isCentralDSTDate(year, month, day) {
+  // U.S. DST: second Sunday in March through first Sunday in November.
+  const marchSecondSunday = nthWeekdayOfMonth(year, 2, 0, 2);
+  const novemberFirstSunday = nthWeekdayOfMonth(year, 10, 0, 1);
+  if (month < 3 || month > 11) return false;
+  if (month > 3 && month < 11) return true;
+  if (month === 3) return day >= marchSecondSunday;
+  if (month === 11) return day < novemberFirstSunday;
   return false;
 }
 
 function chicagoParts(date = new Date()) {
-  const formatter =
-    new Intl.DateTimeFormat(
-      "en-US",
-      {
-        timeZone: TZ,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        weekday: "short",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hourCycle: "h23"
-      }
-    );
-
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  });
   const values = {};
-
-  for (
-    const part of
-    formatter.formatToParts(date)
-  ) {
-    if (part.type !== "literal") {
-      values[part.type] =
-        part.value;
-    }
+  for (const part of formatter.formatToParts(date)) {
+    if (part.type !== "literal") values[part.type] = part.value;
   }
-
-  const weekdayMap = {
-    Sun: 0,
-    Mon: 1,
-    Tue: 2,
-    Wed: 3,
-    Thu: 4,
-    Fri: 5,
-    Sat: 6
-  };
-
+  const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
   return {
-    year:
-      Number(values.year),
-
-    month:
-      Number(values.month),
-
-    day:
-      Number(values.day),
-
-    weekday:
-      weekdayMap[
-        values.weekday
-      ],
-
-    hour:
-      Number(values.hour),
-
-    minute:
-      Number(values.minute),
-
-    second:
-      Number(values.second)
+    year: Number(values.year),
+    month: Number(values.month),
+    day: Number(values.day),
+    weekday: weekdayMap[values.weekday],
+    hour: Number(values.hour),
+    minute: Number(values.minute),
+    second: Number(values.second)
   };
 }
 
 function dateKey(parts) {
-  return (
-    `${parts.year}-` +
-    `${String(parts.month).padStart(2, "0")}-` +
-    `${String(parts.day).padStart(2, "0")}`
-  );
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
 }
 
-function isNexusSunday(
-  year,
-  month,
-  day
-) {
-  const anchor =
-    Date.UTC(
-      2026,
-      10,
-      8
-    );
-
-  const current =
-    Date.UTC(
-      year,
-      month - 1,
-      day
-    );
-
-  const days =
-    Math.floor(
-      (
-        current -
-        anchor
-      ) /
-      86400000
-    );
-
-  return (
-    days >= 0 &&
-    days % 14 === 0
-  );
+function isNexusSunday(year, month, day) {
+  const anchor = Date.UTC(2026, 10, 8);
+  const current = Date.UTC(year, month - 1, day);
+  const days = Math.floor((current - anchor) / 86400000);
+  return days >= 0 && days % 14 === 0;
 }
 
 const SCHEDULED_EVENTS = [
@@ -2580,228 +2160,148 @@ const SCHEDULED_EVENTS = [
     text: "⏰ Guild Clash Registration is open!"
   },
   {
-    key: "sever_pre",
-    label: "Server Tournament Vote Reminder",
+    key: "server_tournament_start",
+    label: "Server Tournament",
     role: TOURNAMENTS.sever.role,
     days: [6],
-    winter: [14,5],
-    summer: [15,5],
-    text: "🗳️ Server Tournament voting opens in 5 minutes. Get ready to vote!",
+    winter: [14,0],
+    summer: [15,0],
+    text: "⚔️ Server Tournament has started! The tournament battle is now underway. Keep an eye on the Live Event Board for voting rounds.",
     tournament: "sever",
-    kind: "pre"
+    kind: "tournament_start"
   },
   {
-    key: "sever_start",
-    label: "Server Tournament Voting",
-    days: [6],
-    winter: [14,10],
-    summer: [15,10],
-    tournament: "sever",
-    kind: "start"
-  },
-  {
-    key: "nexus_pre",
-    label: "Nexus Tournament Vote Reminder",
+    key: "nexus_tournament_start",
+    label: "Nexus Tournament",
     role: TOURNAMENTS.nexus.role,
     days: [0],
-    winter: [15,5],
-    summer: [16,5],
-    text: "🗳️ Nexus Tournament voting opens in 5 minutes. Get ready to vote!",
+    winter: [15,0],
+    summer: [16,0],
+    text: "🌀 Nexus Tournament has started! The tournament battle is now underway. Keep an eye on the Live Event Board for voting rounds.",
     tournament: "nexus",
-    kind: "pre",
-    alternateSunday: true
-  },
-  {
-    key: "nexus_start",
-    label: "Nexus Tournament Voting",
-    days: [0],
-    winter: [15,10],
-    summer: [16,10],
-    tournament: "nexus",
-    kind: "start",
+    kind: "tournament_start",
     alternateSunday: true
   }
 ];
 
-function eventTimeForDate(
-  event,
-  y,
-  m,
-  d
-) {
-  return isCentralDSTDate(
-    y,
-    m,
-    d
-  )
-    ? event.summer
-    : event.winter;
+function eventTimeForDate(event, y, m, d) {
+  return isCentralDSTDate(y, m, d) ? event.summer : event.winter;
 }
 
-function eventApplies(
-  event,
-  y,
-  m,
-  d,
-  weekday
-) {
-  if (
-    !event.days.includes(
-      weekday
-    )
-  ) {
-    return false;
-  }
-
-  if (
-    event.alternateSunday &&
-    !isNexusSunday(
-      y,
-      m,
-      d
-    )
-  ) {
-    return false;
-  }
-
+function eventApplies(event, y, m, d, weekday) {
+  if (!event.days.includes(weekday)) return false;
+  if (event.alternateSunday && !isNexusSunday(y, m, d)) return false;
   return true;
 }
+
 // =====================================================
 // LOCALIZED NOTIFICATION DELIVERY
 // =====================================================
 
-async function sendMasterLog(
-  roleId,
-  label,
-  text,
-  deliveredCount
-) {
-  const channel =
-    await client.channels
-      .fetch(CHANNELS.REMINDERS)
-      .catch(() => null);
+async function sendMasterLog(roleId, label, text, deliveredCount) {
+  const channel = await client.channels.fetch(CHANNELS.REMINDERS).catch(() => null);
+  if (!channel?.isTextBased()) throw new Error("#guild-pings is unavailable");
 
-  if (!channel?.isTextBased()) {
-    throw new Error(
-      "#guild-pings is unavailable"
-    );
-  }
-
-  const roleText =
-    roleId
-      ? `<@&${roleId}> `
-      : "";
+  const embed = brandEmbed(
+    `🔔 ${label}`,
+    text || "Event notification sent."
+  )
+    .addFields(
+      {
+        name: "🌎 Localized Delivery",
+        value: `${deliveredCount} member${deliveredCount === 1 ? "" : "s"} notified in their primary-language General channel.`,
+        inline: false
+      },
+      {
+        name: "🎯 Subscriber Role",
+        value: roleId ? `<@&${roleId}>` : "No role",
+        inline: false
+      }
+    )
+    .setFooter({ text: "Vestra • Guild Ping Log • This message does not ping members" })
+    .setTimestamp();
 
   await channel.send({
-    content:
-      `${roleText}**${label}**\n` +
-      `${text || ""}\n\n` +
-      `🌎 Vestra delivered ${deliveredCount} localized notification${deliveredCount === 1 ? "" : "s"}.`,
-
-    allowedMentions: {
-      parse: []
-    }
+    embeds: [embed],
+    allowedMentions: { parse: [] }
   });
 }
 
-async function sendLocalizedRoleNotification(
-  roleId,
-  englishText,
-  label
-) {
-  const guild = getGuild();
+async function ensureLanguageAccess(member, languageKey) {
+  const info = LANGUAGE_CHANNELS[languageKey];
+  if (!info) return false;
 
-  if (!guild) {
-    return 0;
+  if (!member.roles.cache.has(info.role)) {
+    try {
+      await member.roles.add(info.role);
+    } catch (error) {
+      console.error(
+        `⚠️ Could not add ${info.name} access to ${member.user.tag}:`,
+        error.message
+      );
+    }
   }
+
+  const channel = await client.channels.fetch(info.channel).catch(() => null);
+  if (!channel?.isTextBased()) return false;
+
+  return !!channel.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel);
+}
+
+async function sendLocalizedRoleNotification(roleId, englishText, label) {
+  const guild = getGuild();
+  if (!guild) return 0;
 
   await guild.members.fetch();
 
-  const members =
-    guild.members.cache.filter(
-      member =>
-        !member.user.bot &&
-        member.roles.cache.has(roleId)
-    );
+  const role = await guild.roles.fetch(roleId).catch(() => null);
+  if (!role) {
+    console.error(`❌ ${label}: role ${roleId} could not be found.`);
+    await sendMasterLog(roleId, label, englishText, 0);
+    return 0;
+  }
 
-  const ids =
-    [...members.keys()];
-
-  const prefs =
-    await loadPrimaryLanguageMap(ids);
-
-  const grouped =
-    new Map(
-      LANGUAGE_KEYS.map(
-        key => [key, []]
-      )
-    );
+  const members = role.members.filter(member => !member.user.bot);
+  const ids = [...members.keys()];
+  const prefs = await loadPrimaryLanguageMap(ids);
+  const grouped = new Map(LANGUAGE_KEYS.map(key => [key, []]));
 
   for (const member of members.values()) {
-    const lang =
-      inferPrimaryFromRoles(
-        member,
-        prefs
-      );
-
-    grouped.get(lang)
-      ?.push(member);
+    const languageKey = inferPrimaryFromRoles(member, prefs);
+    grouped.get(languageKey)?.push(member);
   }
 
   let delivered = 0;
 
-  for (
-    const [
-      languageKey,
-      recipients
-    ] of grouped.entries()
-  ) {
-    if (!recipients.length) {
-      continue;
-    }
+  for (const [languageKey, recipients] of grouped.entries()) {
+    if (!recipients.length) continue;
 
-    const info =
-      LANGUAGE_CHANNELS[
-        languageKey
-      ];
-
-    const channel =
-      await client.channels
-        .fetch(info.channel)
-        .catch(() => null);
-
+    const info = LANGUAGE_CHANNELS[languageKey];
+    const channel = await client.channels.fetch(info.channel).catch(() => null);
     if (!channel?.isTextBased()) {
+      console.error(`❌ ${label}: ${info.name} General channel unavailable.`);
       continue;
     }
 
-    const visible =
-      recipients.filter(
-        member =>
-          channel
-            .permissionsFor(member)
-            ?.has(
-              PermissionFlagsBits.ViewChannel
-            )
-      );
+    const reachable = [];
 
-    if (!visible.length) {
-      continue;
+    for (const member of recipients) {
+      const canView = await ensureLanguageAccess(member, languageKey);
+      if (canView) reachable.push(member);
+      else {
+        console.error(
+          `⚠️ ${label}: ${member.user.tag} cannot view ${info.name} General.`
+        );
+      }
     }
 
-    let localized =
-      englishText;
+    if (!reachable.length) continue;
 
-    if (
-      languageKey !==
-      "english"
-    ) {
+    let localized = englishText;
+
+    if (languageKey !== "english") {
       try {
-        localized =
-          await googleTranslate(
-            englishText,
-            info.code,
-            "en"
-          );
+        localized = await googleTranslate(englishText, info.code, "en");
       } catch (error) {
         console.error(
           `⚠️ Notification translation fallback (${languageKey}):`,
@@ -2810,49 +2310,28 @@ async function sendLocalizedRoleNotification(
       }
     }
 
-    for (
-      const group of
-      chunks(
-        visible,
-        40
-      )
-    ) {
-      const userIds =
-        group.map(
-          member =>
-            member.id
-        );
-
-      const mentions =
-        userIds
-          .map(
-            id =>
-              `<@${id}>`
-          )
-          .join(" ");
+    for (const group of chunks(reachable, 40)) {
+      const userIds = group.map(member => member.id);
+      const mentions = userIds.map(id => `<@${id}>`).join(" ");
 
       await channel.send({
-        content:
-          `${mentions}\n${localized}`,
-
+        content: `${mentions}
+${localized}`,
         allowedMentions: {
           parse: [],
           users: userIds
         }
       });
 
-      delivered +=
-        userIds.length;
+      delivered += userIds.length;
     }
   }
 
-  await sendMasterLog(
-    roleId,
-    label,
-    englishText,
-    delivered
+  console.log(
+    `📣 ${label}: ${members.size} subscriber(s), ${delivered} localized delivery/deliveries.`
   );
 
+  await sendMasterLog(roleId, label, englishText, delivered);
   return delivered;
 }
 
@@ -2861,74 +2340,52 @@ async function sendLocalizedRoleNotification(
 // =====================================================
 
 async function getActiveTournamentState() {
-  const result =
-    await pool.query(
-      "SELECT * FROM tournament_state WHERE phase <> 'inactive' AND phase <> 'complete' ORDER BY updated_at DESC LIMIT 1"
-    );
-
+  const result = await pool.query(
+    "SELECT * FROM tournament_state WHERE phase <> 'inactive' AND phase <> 'complete' ORDER BY updated_at DESC LIMIT 1"
+  );
   return result.rows[0] || null;
 }
 
-async function setTournamentState(
-  tournament,
-  activeDate,
-  round,
-  phase,
-  voteEndsAt = null
-) {
+async function setTournamentState(tournament, activeDate, round, phase, voteEndsAt = null) {
   await pool.query(
-    `INSERT INTO tournament_state(
-       tournament,
-       active_date,
-       round,
-       phase,
-       vote_ends_at,
-       updated_at
-     )
+    `INSERT INTO tournament_state(tournament, active_date, round, phase, vote_ends_at, updated_at)
      VALUES($1,$2,$3,$4,$5,NOW())
-     ON CONFLICT(tournament)
-     DO UPDATE SET
+     ON CONFLICT(tournament) DO UPDATE SET
        active_date = EXCLUDED.active_date,
        round = EXCLUDED.round,
        phase = EXCLUDED.phase,
        vote_ends_at = EXCLUDED.vote_ends_at,
        updated_at = NOW()`,
-    [
-      tournament,
-      activeDate,
-      round,
-      phase,
-      voteEndsAt
-    ]
+    [tournament, activeDate, round, phase, voteEndsAt]
   );
 }
 
-async function startTournamentVote(
-  tournamentKey,
-  round,
-  pingMembers = true
-) {
-  const tournament =
-    TOURNAMENTS[tournamentKey];
-
-  const parts =
-    chicagoParts();
-
-  const ends =
-    new Date(
-      Date.now() +
-      tournament.voteMinutes *
-        60 *
-        1000
-    );
+async function startTournamentEvent(tournamentKey, announcementText, label) {
+  const tournament = TOURNAMENTS[tournamentKey];
+  const parts = chicagoParts();
 
   await setTournamentState(
     tournamentKey,
     dateKey(parts),
-    round,
-    "voting",
-    ends
+    0,
+    "battle",
+    null
   );
+
+  await sendLocalizedRoleNotification(
+    tournament.role,
+    announcementText,
+    label
+  );
+
+  await updateEventBoard();
+}
+
+async function startTournamentVote(tournamentKey, round, pingMembers = true) {
+  const tournament = TOURNAMENTS[tournamentKey];
+  const parts = chicagoParts();
+  const ends = new Date(Date.now() + tournament.voteMinutes * 60 * 1000);
+  await setTournamentState(tournamentKey, dateKey(parts), round, "voting", ends);
 
   if (pingMembers) {
     await sendLocalizedRoleNotification(
@@ -2942,149 +2399,49 @@ async function startTournamentVote(
 }
 
 async function closeTournamentVote(state) {
-  const tournament =
-    TOURNAMENTS[
-      state.tournament
-    ];
-
-  const phase =
-    state.round >=
-    tournament.rounds
-      ? "final_battle"
-      : "battle";
-
-  await setTournamentState(
-    state.tournament,
-    state.active_date,
-    state.round,
-    phase,
-    null
-  );
-
+  const tournament = TOURNAMENTS[state.tournament];
+  const phase = state.round >= tournament.rounds ? "final_battle" : "battle";
+  await setTournamentState(state.tournament, state.active_date, state.round, phase, null);
   await updateEventBoard();
 }
 
-async function finishTournament(
-  tournamentKey
-) {
-  const parts =
-    chicagoParts();
-
-  await setTournamentState(
-    tournamentKey,
-    dateKey(parts),
-    0,
-    "complete",
-    null
-  );
-
+async function finishTournament(tournamentKey) {
+  const parts = chicagoParts();
+  await setTournamentState(tournamentKey, dateKey(parts), 0, "complete", null);
   await updateEventBoard();
 }
 
-function format12Hour(
-  hour,
-  minute
-) {
-  const suffix =
-    hour >= 12
-      ? "PM"
-      : "AM";
-
-  const h =
-    hour % 12 ||
-    12;
-
-  return (
-    `${h}:` +
-    `${String(minute).padStart(2, "0")} ` +
-    suffix
-  );
+function format12Hour(hour, minute) {
+  const suffix = hour >= 12 ? "PM" : "AM";
+  const h = hour % 12 || 12;
+  return `${h}:${String(minute).padStart(2, "0")} ${suffix}`;
 }
 
-function upcomingEvents(
-  limit = 5
-) {
-  const now =
-    chicagoParts();
-
-  const nowMinutes =
-    now.hour *
-      60 +
-    now.minute;
-
+function upcomingEvents(limit = 6) {
+  const now = chicagoParts();
+  const nowMinutes = now.hour * 60 + now.minute;
   const candidates = [];
 
-  for (
-    let offset = 0;
-    offset <= 14;
-    offset++
-  ) {
-    const calendar =
-      new Date(
-        Date.UTC(
-          now.year,
-          now.month - 1,
-          now.day + offset,
-          12
-        )
-      );
+  for (let offset = 0; offset <= 14; offset++) {
+    const calendar = new Date(
+      Date.UTC(now.year, now.month - 1, now.day + offset, 12)
+    );
 
-    const y =
-      calendar.getUTCFullYear();
+    const y = calendar.getUTCFullYear();
+    const m = calendar.getUTCMonth() + 1;
+    const d = calendar.getUTCDate();
+    const weekday = calendar.getUTCDay();
 
-    const m =
-      calendar.getUTCMonth() +
-      1;
+    for (const event of SCHEDULED_EVENTS) {
+      if (!eventApplies(event, y, m, d, weekday)) continue;
 
-    const d =
-      calendar.getUTCDate();
-
-    const weekday =
-      calendar.getUTCDay();
-
-    for (
-      const event of
-      SCHEDULED_EVENTS
-    ) {
-      if (
-        !eventApplies(
-          event,
-          y,
-          m,
-          d,
-          weekday
-        )
-      ) {
-        continue;
-      }
-
-      const [
-        hour,
-        minute
-      ] =
-        eventTimeForDate(
-          event,
-          y,
-          m,
-          d
-        );
-
+      const [hour, minute] = eventTimeForDate(event, y, m, d);
       const relativeMinutes =
-        offset *
-          1440 +
-        (
-          hour *
-            60 +
-          minute
-        ) -
+        offset * 1440 +
+        (hour * 60 + minute) -
         nowMinutes;
 
-      if (
-        relativeMinutes <
-        0
-      ) {
-        continue;
-      }
+      if (relativeMinutes < 0) continue;
 
       candidates.push({
         ...event,
@@ -3094,239 +2451,217 @@ function upcomingEvents(
         weekday,
         hour,
         minute,
+        offset,
         relativeMinutes
       });
     }
   }
 
   return candidates
-    .sort(
-      (a, b) =>
-        a.relativeMinutes -
-        b.relativeMinutes
-    )
+    .sort((a, b) => a.relativeMinutes - b.relativeMinutes)
     .slice(0, limit);
 }
 
+function eventDayLabel(event) {
+  if (event.offset === 0) return "Today";
+  if (event.offset === 1) return "Tomorrow";
+
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC"
+  }).format(
+    new Date(Date.UTC(event.y, event.m - 1, event.d, 12))
+  );
+}
+
+function countdownText(relativeMinutes) {
+  const days = Math.floor(relativeMinutes / 1440);
+  const hours = Math.floor((relativeMinutes % 1440) / 60);
+  const minutes = relativeMinutes % 60;
+
+  if (days > 0) {
+    return `${days}d ${hours}h ${minutes}m`;
+  }
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  return `${Math.max(minutes, 0)}m`;
+}
+
 function eventBoardDefaultEmbed() {
-  const events =
-    upcomingEvents(5);
+  const events = upcomingEvents(6);
+  const next = events[0];
+  const future = events.slice(1);
 
-  const lines =
-    events.map(event => {
-      const day =
-        event.relativeMinutes <
-        1440
-          ? "Today"
-          : new Intl.DateTimeFormat(
-              "en-US",
-              {
-                weekday: "short",
-                month: "short",
-                day: "numeric",
-                timeZone: "UTC"
-              }
-            ).format(
-              new Date(
-                Date.UTC(
-                  event.y,
-                  event.m - 1,
-                  event.d,
-                  12
-                )
-              )
-            );
+  const now = chicagoParts();
 
-      const hours =
-        Math.floor(
-          event.relativeMinutes /
-          60
-        );
+  const mode = isCentralDSTDate(
+    now.year,
+    now.month,
+    now.day
+  )
+    ? "Summer / DST schedule"
+    : "Winter / Standard schedule";
 
-      const minutes =
-        event.relativeMinutes %
-        60;
-
-      const countdown =
-        hours
-          ? `${hours}h ${minutes}m`
-          : `${minutes}m`;
-
-      return (
-        `**${event.label}** — ` +
-        `${day} at **${format12Hour(
-          event.hour,
-          event.minute
-        )}** • ~${countdown}`
-      );
-    });
-
-  const now =
-    chicagoParts();
-
-  const mode =
-    isCentralDSTDate(
-      now.year,
-      now.month,
-      now.day
-    )
-      ? "Summer / DST schedule"
-      : "Winter / Standard schedule";
-
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
+    .setColor(BRAND_COLOR)
+    .setAuthor({
+      name: "🖤 ASHEN LIVE EVENT BOARD"
+    })
     .setTitle(
-      "🖤 Ashen Live Event Board"
+      next
+        ? `⏳ NEXT EVENT • ${next.label.toUpperCase()}`
+        : "⏳ NEXT EVENT"
     )
     .setDescription(
-      lines.join("\n") ||
-      "No upcoming events found."
-    )
-    .addFields({
-      name:
-        "🕒 Current Game Schedule",
+      next
+        ? `**${eventDayLabel(next)} • ${format12Hour(next.hour, next.minute)}**
+Starts in **${countdownText(next.relativeMinutes)}**`
+        : "No upcoming events found."
+    );
 
-      value:
-        mode
+  if (future.length) {
+    embed.addFields({
+      name: "📅 COMING UP",
+      value: future
+        .map(
+          event =>
+            `**${event.label}**
+${eventDayLabel(event)} • ${format12Hour(event.hour, event.minute)} • ${countdownText(event.relativeMinutes)}`
+        )
+        .join("\n\n")
+    });
+  }
+
+  embed
+    .addFields({
+      name: "🕒 CURRENT GAME SCHEDULE",
+      value: mode
     })
     .setFooter({
-      text:
-        "Vestra updates this board automatically."
+      text: "Vestra • Live Event Board • Updates automatically"
     })
     .setTimestamp();
+
+  return embed;
 }
 
 async function eventBoardPayload() {
-  const state =
-    await getActiveTournamentState();
+  const state = await getActiveTournamentState();
 
   const rows = [
-    new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId("settings_open")
-          .setLabel("My Settings")
-          .setEmoji("✨")
-          .setStyle(ButtonStyle.Secondary),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("settings_open")
+        .setLabel("My Settings")
+        .setEmoji("✨")
+        .setStyle(ButtonStyle.Secondary),
 
-        new ButtonBuilder()
-          .setCustomId("settings_card")
-          .setLabel("My Vestra Card")
-          .setEmoji("👤")
-          .setStyle(ButtonStyle.Secondary)
-      )
+      new ButtonBuilder()
+        .setCustomId("settings_card")
+        .setLabel("My Vestra Card")
+        .setEmoji("👤")
+        .setStyle(ButtonStyle.Secondary)
+    )
   ];
 
   if (!state) {
     return {
-      embeds: [
-        eventBoardDefaultEmbed()
-      ],
-
-      components:
-        rows
+      embeds: [eventBoardDefaultEmbed()],
+      components: rows
     };
   }
 
-  const tournament =
-    TOURNAMENTS[
-      state.tournament
-    ];
+  const tournament = TOURNAMENTS[state.tournament];
 
-  const embed =
-    new EmbedBuilder()
-      .setTitle(
-        `${tournament.emoji} ${tournament.name} — Round ${state.round}/${tournament.rounds}`
-      )
-      .setFooter({
-        text:
-          "Vestra Tournament Mode"
-      })
-      .setTimestamp();
+  const title =
+    state.round > 0
+      ? `${tournament.emoji} ${tournament.name} — Round ${state.round}/${tournament.rounds}`
+      : `${tournament.emoji} ${tournament.name} — LIVE`;
 
-  if (
-    state.phase ===
-    "voting"
-  ) {
-    const unix =
-      Math.floor(
-        new Date(
-          state.vote_ends_at
-        ).getTime() /
-        1000
-      );
+  const embed = new EmbedBuilder()
+    .setColor(BRAND_COLOR)
+    .setAuthor({
+      name: "🏆 ASHEN TOURNAMENT MODE"
+    })
+    .setTitle(title)
+    .setFooter({
+      text: "Vestra • Tournament Mode"
+    })
+    .setTimestamp();
+
+  if (state.phase === "voting") {
+    const unix = Math.floor(
+      new Date(state.vote_ends_at).getTime() / 1000
+    );
 
     embed
       .setDescription(
-        "## 🟢 VOTING OPEN\nVote now!"
+        `**🟢 VOTING OPEN — ROUND ${state.round}**
+
+Vote now — voting closes <t:${unix}:R>.`
       )
       .addFields(
         {
-          name:
-            "⏳ Voting closes",
-
-          value:
-            `<t:${unix}:R> • <t:${unix}:t>`
+          name: "⏳ Voting Window",
+          value: `<t:${unix}:R> • closes at <t:${unix}:t>`
         },
-
         {
-          name:
-            "Next",
-
-          value:
-            "⚔️ Battle begins when voting closes."
+          name: "⚔️ What Happens Next?",
+          value: "When voting closes, Vestra switches the board back to **Battle in Progress**. Staff will manually open the next vote when the battle actually ends."
         }
       );
-  } else if (
-    state.phase ===
-    "battle"
-  ) {
+  } else if (state.phase === "battle") {
+    const nextRound = state.round + 1;
+
     embed
       .setDescription(
-        "## 🔴 BATTLE IN PROGRESS\nVoting is closed."
+        state.round === 0
+          ? `**🔴 TOURNAMENT BATTLE IN PROGRESS**
+
+The tournament has started. Voting rounds are controlled manually by Ashen staff.`
+          : `**🔴 BATTLE IN PROGRESS — ROUND ${state.round} COMPLETE**
+
+Voting is closed while the battle plays out.`
       )
       .addFields({
-        name:
-          "Next",
-
-        value:
-          `Staff will open Round ${state.round + 1} voting when the battle ends.`
+        name: "🗳️ Next Vote",
+        value: `Staff will manually open **Round ${nextRound}** when the battle is ready.`
       });
 
     rows.push(
-      new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId("tournament_next")
-            .setLabel("Start Next Vote")
-            .setEmoji("🗳️")
-            .setStyle(ButtonStyle.Success)
-        )
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("tournament_next")
+          .setLabel(`Start Vote ${nextRound}`)
+          .setEmoji("🗳️")
+          .setStyle(ButtonStyle.Success)
+      )
     );
-  } else if (
-    state.phase ===
-    "final_battle"
-  ) {
+  } else if (state.phase === "final_battle") {
     embed
       .setDescription(
-        "## 🔴 FINAL BATTLE IN PROGRESS\nRound 4 voting is closed."
+        `**🔴 FINAL BATTLE IN PROGRESS — ROUND 4 COMPLETE**
+
+All four voting rounds are finished.`
       )
       .addFields({
-        name:
-          "Next",
-
-        value:
-          "Staff can finish Tournament Mode when the final battle ends."
+        name: "🏁 Finish",
+        value: "When the final battle ends, staff can finish Tournament Mode and return the board to the normal upcoming-event view."
       });
 
     rows.push(
-      new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId("tournament_finish")
-            .setLabel("Finish Tournament")
-            .setEmoji("🏁")
-            .setStyle(ButtonStyle.Primary)
-        )
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("tournament_finish")
+          .setLabel("Finish Tournament")
+          .setEmoji("🏁")
+          .setStyle(ButtonStyle.Primary)
+      )
     );
   }
 
@@ -3337,104 +2672,39 @@ async function eventBoardPayload() {
 }
 
 async function setupEventBoard() {
-  const channel =
-    await client.channels.fetch(
-      CHANNELS.EVENT_BOARD
-    );
+  const channel = await client.channels.fetch(CHANNELS.EVENT_BOARD);
+  if (!channel?.isTextBased()) return;
 
-  if (!channel?.isTextBased()) {
-    return;
-  }
-
-  let state =
-    await dbGetState(
-      "event_board_message"
-    );
-
-  let message =
-    state?.messageId
-      ? await channel.messages
-          .fetch(state.messageId)
-          .catch(() => null)
-      : null;
+  let state = await dbGetState("event_board_message");
+  let message = state?.messageId ? await channel.messages.fetch(state.messageId).catch(() => null) : null;
 
   if (!message) {
-    const recent =
-      await channel.messages.fetch({
-        limit: 50
-      });
-
-    message =
-      recent.find(
-        m =>
-          m.author.id ===
-            client.user.id &&
-          m.embeds?.[0]
-            ?.title
-            ?.includes(
-              "Ashen Live Event Board"
-            )
-      ) || null;
+    const recent = await channel.messages.fetch({ limit: 50 });
+    message = recent.find(
+      m =>
+        m.author.id === client.user.id &&
+        (
+          m.embeds?.[0]?.footer?.text?.includes("Live Event Board") ||
+          m.embeds?.[0]?.title?.toLowerCase().includes("live event board")
+        )
+    ) || null;
   }
 
-  const payload =
-    await eventBoardPayload();
+  const payload = await eventBoardPayload();
+  if (!message) message = await channel.send(payload);
+  else await message.edit(payload);
 
-  if (!message) {
-    message =
-      await channel.send(payload);
-  } else {
-    await message.edit(payload);
-  }
-
-  await dbSetState(
-    "event_board_message",
-    {
-      messageId: message.id
-    }
-  );
-
-  console.log(
-    "✅ Live Ashen Event Board ready."
-  );
+  await dbSetState("event_board_message", { messageId: message.id });
+  console.log("✅ Live Ashen Event Board ready.");
 }
 
 async function updateEventBoard() {
-  const channel =
-    await client.channels
-      .fetch(CHANNELS.EVENT_BOARD)
-      .catch(() => null);
-
-  if (!channel?.isTextBased()) {
-    return;
-  }
-
-  const state =
-    await dbGetState(
-      "event_board_message"
-    );
-
-  let message =
-    state?.messageId
-      ? await channel.messages
-          .fetch(state.messageId)
-          .catch(() => null)
-      : null;
-
-  if (!message) {
-    return setupEventBoard();
-  }
-
-  await message
-    .edit(
-      await eventBoardPayload()
-    )
-    .catch(error =>
-      console.error(
-        "❌ Event Board update:",
-        error.message
-      )
-    );
+  const channel = await client.channels.fetch(CHANNELS.EVENT_BOARD).catch(() => null);
+  if (!channel?.isTextBased()) return;
+  const state = await dbGetState("event_board_message");
+  let message = state?.messageId ? await channel.messages.fetch(state.messageId).catch(() => null) : null;
+  if (!message) return setupEventBoard();
+  await message.edit(await eventBoardPayload()).catch(error => console.error("❌ Event Board update:", error.message));
 }
 
 // =====================================================
@@ -3444,45 +2714,23 @@ async function updateEventBoard() {
 let schedulerRunning = false;
 
 async function wasEventSent(key) {
-  const result =
-    await pool.query(
-      "SELECT 1 FROM sent_events WHERE event_key = $1",
-      [key]
-    );
-
+  const result = await pool.query("SELECT 1 FROM sent_events WHERE event_key = $1", [key]);
   return !!result.rows[0];
 }
 
 async function markEventSent(key) {
-  await pool.query(
-    "INSERT INTO sent_events(event_key) VALUES($1) ON CONFLICT(event_key) DO NOTHING",
-    [key]
-  );
+  await pool.query("INSERT INTO sent_events(event_key) VALUES($1) ON CONFLICT(event_key) DO NOTHING", [key]);
 }
 
-async function processScheduledEvent(
-  event,
-  parts
-) {
-  const persistentKey =
-    `${dateKey(parts)}:${event.key}`;
+async function processScheduledEvent(event, parts) {
+  const persistentKey = `${dateKey(parts)}:${event.key}`;
+  if (await wasEventSent(persistentKey)) return;
 
-  if (
-    await wasEventSent(
-      persistentKey
-    )
-  ) {
-    return;
-  }
-
-  if (
-    event.kind ===
-    "start"
-  ) {
-    await startTournamentVote(
+  if (event.kind === "tournament_start") {
+    await startTournamentEvent(
       event.tournament,
-      1,
-      true
+      event.text,
+      event.label
     );
   } else {
     await sendLocalizedRoleNotification(
@@ -3492,657 +2740,212 @@ async function processScheduledEvent(
     );
   }
 
-  await markEventSent(
-    persistentKey
-  );
+  await markEventSent(persistentKey);
 }
 
 async function checkSchedule() {
-  if (schedulerRunning) {
-    return;
-  }
-
+  if (schedulerRunning) return;
   schedulerRunning = true;
 
   try {
-    const now =
-      chicagoParts();
+    const now = chicagoParts();
+    const currentMinutes = now.hour * 60 + now.minute;
 
-    const currentMinutes =
-      now.hour *
-        60 +
-      now.minute;
-
-    for (
-      const event of
-      SCHEDULED_EVENTS
-    ) {
-      if (
-        !eventApplies(
-          event,
-          now.year,
-          now.month,
-          now.day,
-          now.weekday
-        )
-      ) {
-        continue;
-      }
-
-      const [
-        hour,
-        minute
-      ] =
-        eventTimeForDate(
-          event,
-          now.year,
-          now.month,
-          now.day
-        );
-
-      const late =
-        currentMinutes -
-        (
-          hour *
-            60 +
-          minute
-        );
-
-      if (
-        late < 0 ||
-        late > 3
-      ) {
-        continue;
-      }
-
+    for (const event of SCHEDULED_EVENTS) {
+      if (!eventApplies(event, now.year, now.month, now.day, now.weekday)) continue;
+      const [hour, minute] = eventTimeForDate(event, now.year, now.month, now.day);
+      const late = currentMinutes - (hour * 60 + minute);
+      if (late < 0 || late > 3) continue;
       try {
-        await processScheduledEvent(
-          event,
-          now
-        );
+        await processScheduledEvent(event, now);
       } catch (error) {
-        console.error(
-          `❌ Scheduled event error (${event.key}):`,
-          error
-        );
+        console.error(`❌ Scheduled event error (${event.key}):`, error);
       }
     }
 
-    const active =
-      await getActiveTournamentState();
-
-    if (
-      active?.phase ===
-        "voting" &&
-      active.vote_ends_at &&
-      new Date(
-        active.vote_ends_at
-      ).getTime() <=
-        Date.now()
-    ) {
-      await closeTournamentVote(
-        active
-      );
+    const active = await getActiveTournamentState();
+    if (active?.phase === "voting" && active.vote_ends_at && new Date(active.vote_ends_at).getTime() <= Date.now()) {
+      await closeTournamentVote(active);
     }
   } finally {
-    schedulerRunning =
-      false;
+    schedulerRunning = false;
   }
 }
 
 function startScheduler() {
-  console.log(
-    "✅ Persistent DST-aware scheduler active."
-  );
-
+  console.log("✅ Persistent DST-aware scheduler active.");
   void checkSchedule();
-
-  setInterval(
-    () =>
-      void checkSchedule(),
-    20_000
-  );
-
-  setInterval(
-    () =>
-      void updateEventBoard(),
-    60_000
-  );
+  setInterval(() => void checkSchedule(), 20_000);
+  setInterval(() => void updateEventBoard(), 60_000);
 }
+
 // =====================================================
 // PERMISSION CHECKS
 // =====================================================
 
-async function checkChannelPermissions(
-  channelId,
-  label,
-  required
-) {
-  const channel =
-    await client.channels
-      .fetch(channelId)
-      .catch(() => null);
-
+async function checkChannelPermissions(channelId, label, required) {
+  const channel = await client.channels.fetch(channelId).catch(() => null);
   if (!channel) {
-    console.error(
-      `❌ ${label}: Channel unavailable`
-    );
+    console.error(`❌ ${label}: Channel unavailable`);
     return;
   }
-
-  const guild =
-    channel.guild;
-
-  const me =
-    guild.members.me ||
-    await guild.members.fetchMe();
-
-  const permissions =
-    channel.permissionsFor(me);
-
-  const missing =
-    required
-      .filter(
-        permission =>
-          !permissions?.has(
-            permission.flag
-          )
-      )
-      .map(
-        permission =>
-          permission.name
-      );
-
-  if (missing.length) {
-    console.error(
-      `❌ ${label}: Missing ${missing.join(", ")}`
-    );
-  } else {
-    console.log(
-      `✅ ${label}: Permissions OK`
-    );
-  }
+  const guild = channel.guild;
+  const me = guild.members.me || await guild.members.fetchMe();
+  const permissions = channel.permissionsFor(me);
+  const missing = required.filter(permission => !permissions?.has(permission.flag)).map(permission => permission.name);
+  if (missing.length) console.error(`❌ ${label}: Missing ${missing.join(", ")}`);
+  else console.log(`✅ ${label}: Permissions OK`);
 }
 
 async function runPermissionChecks() {
   const basic = [
-    {
-      name:
-        "View Channel",
-
-      flag:
-        PermissionFlagsBits.ViewChannel
-    },
-
-    {
-      name:
-        "Send Messages",
-
-      flag:
-        PermissionFlagsBits.SendMessages
-    },
-
-    {
-      name:
-        "Read Message History",
-
-      flag:
-        PermissionFlagsBits.ReadMessageHistory
-    }
+    { name: "View Channel", flag: PermissionFlagsBits.ViewChannel },
+    { name: "Send Messages", flag: PermissionFlagsBits.SendMessages },
+    { name: "Read Message History", flag: PermissionFlagsBits.ReadMessageHistory }
   ];
+  const webhook = [...basic, { name: "Manage Webhooks", flag: PermissionFlagsBits.ManageWebhooks }];
 
-  const webhook = [
-    ...basic,
+  await checkChannelPermissions(CHANNELS.REMINDERS, "#guild-pings", basic);
+  await checkChannelPermissions(CHANNELS.PREFERENCES, "#preferences", [...basic, { name: "Add Reactions", flag: PermissionFlagsBits.AddReactions }]);
+  await checkChannelPermissions(CHANNELS.HELP, "#help", basic);
+  await checkChannelPermissions(CHANNELS.EVENT_BOARD, "Live Event Board", basic);
+  await checkChannelPermissions(CHANNELS.HIGHLIGHTS, "Community Highlights", basic);
 
-    {
-      name:
-        "Manage Webhooks",
-
-      flag:
-        PermissionFlagsBits.ManageWebhooks
-    }
-  ];
-
-  await checkChannelPermissions(
-    CHANNELS.REMINDERS,
-    "#guild-pings",
-    basic
-  );
-
-  await checkChannelPermissions(
-    CHANNELS.PREFERENCES,
-    "#preferences",
-    [
-      ...basic,
-
-      {
-        name:
-          "Add Reactions",
-
-        flag:
-          PermissionFlagsBits.AddReactions
-      }
-    ]
-  );
-
-  await checkChannelPermissions(
-    CHANNELS.HELP,
-    "#help",
-    basic
-  );
-
-  await checkChannelPermissions(
-    CHANNELS.EVENT_BOARD,
-    "Live Event Board",
-    basic
-  );
-
-  await checkChannelPermissions(
-    CHANNELS.HIGHLIGHTS,
-    "Community Highlights",
-    basic
-  );
-
-  for (
-    const info of
-    Object.values(
-      LANGUAGE_CHANNELS
-    )
-  ) {
-    await checkChannelPermissions(
-      info.channel,
-      `${info.name} General`,
-      webhook
-    );
+  for (const info of Object.values(LANGUAGE_CHANNELS)) {
+    await checkChannelPermissions(info.channel, `${info.name} General`, webhook);
   }
 
   const guild = getGuild();
-
   if (guild) {
-    const socialChannels =
-      guild.channels.cache.filter(
-        channel =>
-          channel.parentId ===
-            SOCIAL_CATEGORY_ID &&
-          channel.isTextBased()
-      );
+    const reactionTranslatePermissions = [
+      ...basic,
+      { name: "Manage Messages", flag: PermissionFlagsBits.ManageMessages }
+    ];
 
-    for (
-      const channel of
-      socialChannels.values()
-    ) {
+    const reactionTranslateChannels = guild.channels.cache.filter(
+      channel => isReactionTranslateChannel(channel)
+    );
+
+    for (const channel of reactionTranslateChannels.values()) {
       await checkChannelPermissions(
         channel.id,
-        `Social #${channel.name}`,
-        basic
+        `🌐 Translate #${channel.name}`,
+        reactionTranslatePermissions
       );
     }
 
-    const me =
-      guild.members.me ||
-      await guild.members.fetchMe();
-
-    if (
-      !me.permissions.has(
-        PermissionFlagsBits.ManageRoles
-      )
-    ) {
-      console.error(
-        "❌ Server: Vestra is missing Manage Roles"
-      );
+    const me = guild.members.me || await guild.members.fetchMe();
+    if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) {
+      console.error("❌ Server: Vestra is missing Manage Roles");
     } else {
-      console.log(
-        "✅ Server: Manage Roles OK"
-      );
-
-      const managedRoleIds =
-        new Set([
-          ASHEN_WARRIORS,
-          ONBOARDING_COMPLETE,
-
-          ...Object.values(
-            LANGUAGES
-          ).map(x => x.role),
-
-          ...Object.values(
-            PLAYSTYLE
-          ).map(x => x.role),
-
-          ...Object.values(
-            SOCIAL
-          ).map(x => x.role),
-
-          ...Object.values(
-            REMINDERS
-          ).map(x => x.role),
-
-          ...Object.values(
-            TOURNAMENTS
-          ).map(x => x.role)
-        ]);
-
-      const tooHigh =
-        guild.roles.cache
-          .filter(
-            role =>
-              managedRoleIds.has(
-                role.id
-              ) &&
-              role.position >=
-                me.roles.highest.position
-          )
-          .map(
-            role =>
-              role.name
-          );
-
-      if (tooHigh.length) {
-        console.error(
-          `❌ Role hierarchy: move Vestra above ${tooHigh.join(", ")}`
-        );
-      } else {
-        console.log(
-          "✅ Role hierarchy: Vestra can manage all community roles"
-        );
-      }
+      console.log("✅ Server: Manage Roles OK");
+      const managedRoleIds = new Set([
+        ASHEN_WARRIORS, ONBOARDING_COMPLETE,
+        ...Object.values(LANGUAGES).map(x => x.role),
+        ...Object.values(PLAYSTYLE).map(x => x.role),
+        ...Object.values(SOCIAL).map(x => x.role),
+        ...Object.values(REMINDERS).map(x => x.role),
+        ...Object.values(TOURNAMENTS).map(x => x.role)
+      ]);
+      const tooHigh = guild.roles.cache
+        .filter(role => managedRoleIds.has(role.id) && role.position >= me.roles.highest.position)
+        .map(role => role.name);
+      if (tooHigh.length) console.error(`❌ Role hierarchy: move Vestra above ${tooHigh.join(", ")}`);
+      else console.log("✅ Role hierarchy: Vestra can manage all community roles");
     }
   }
 
-  console.log(
-    "✅ Startup permission audit finished."
-  );
+  console.log("✅ Startup permission audit finished.");
 }
 
 // =====================================================
 // MEMBER JOIN + REACTION ROLES
 // =====================================================
 
-client.on(
-  Events.GuildMemberAdd,
-  async member => {
-    if (member.user.bot) {
-      return;
-    }
-
-    try {
-      await member.roles.add(
-        ASHEN_WARRIORS
-      );
-
-      console.log(
-        `✅ Ashen Warriors added to ${member.user.tag}`
-      );
-    } catch (error) {
-      console.error(
-        "❌ Could not add Ashen Warriors:",
-        error.message
-      );
-    }
+client.on(Events.GuildMemberAdd, async member => {
+  if (member.user.bot) return;
+  try {
+    await member.roles.add(ASHEN_WARRIORS);
+    console.log(`✅ Ashen Warriors added to ${member.user.tag}`);
+    await setupGuildMembersPanel().catch(() => {});
+  } catch (error) {
+    console.error("❌ Could not add Ashen Warriors:", error.message);
   }
-);
+});
+
+client.on(Events.GuildMemberRemove, async member => {
+  if (member.user.bot) return;
+  await setupGuildMembersPanel().catch(() => {});
+});
 
 function itemByEmoji(group, emoji) {
-  return Object.values(group)
-    .find(
-      x =>
-        x.emoji === emoji
-    );
+  return Object.values(group).find(x => x.emoji === emoji);
 }
 
-async function reactionRole(
-  reaction,
-  user,
-  adding
-) {
-  if (user.bot) {
-    return;
-  }
+async function reactionRole(reaction, user, adding) {
+  if (user.bot) return;
+  if (reaction.partial) await reaction.fetch();
+  const message = reaction.message;
+  if (!message.guild) return;
+  const member = await message.guild.members.fetch(user.id);
+  const emoji = reaction.emoji.name;
 
-  if (reaction.partial) {
-    await reaction.fetch();
-  }
-
-  const message =
-    reaction.message;
-
-  if (!message.guild) {
-    return;
-  }
-
-  const member =
-    await message.guild.members.fetch(
-      user.id
-    );
-
-  const emoji =
-    reaction.emoji.name;
-
-  if (
-    message.id ===
-    preferenceMessages.languages?.id
-  ) {
-    const item =
-      itemByEmoji(
-        LANGUAGES,
-        emoji
-      );
-
-    if (!item) {
-      return;
-    }
-
+  if (message.id === preferenceMessages.languages?.id) {
+    const item = itemByEmoji(LANGUAGES, emoji);
+    if (!item) return;
     if (adding) {
-      await member.roles.add(
-        item.role
-      );
-
-      const existing =
-        await pool.query(
-          "SELECT primary_language FROM user_preferences WHERE user_id = $1",
-          [member.id]
-        );
-
-      if (
-        !existing.rows[0]
-          ?.primary_language
-      ) {
-        const key =
-          Object.entries(
-            LANGUAGES
-          ).find(
-            ([, value]) =>
-              value.role ===
-              item.role
-          )?.[0];
-
-        if (key) {
-          await savePrimaryLanguage(
-            member.id,
-            key
-          );
-        }
+      await member.roles.add(item.role);
+      const existing = await pool.query("SELECT primary_language FROM user_preferences WHERE user_id = $1", [member.id]);
+      if (!existing.rows[0]?.primary_language) {
+        const key = Object.entries(LANGUAGES).find(([, value]) => value.role === item.role)?.[0];
+        if (key) await savePrimaryLanguage(member.id, key);
       }
     } else {
-      await member.roles.remove(
-        item.role
-      );
-
-      const current =
-        await inferPrimaryLanguage(
-          member
-        );
-
-      if (
-        LANGUAGE_CHANNELS[
-          current
-        ].role ===
-        item.role
-      ) {
-        const fallback =
-          LANGUAGE_KEYS.find(
-            key =>
-              key !== current &&
-              member.roles.cache.has(
-                LANGUAGE_CHANNELS[
-                  key
-                ].role
-              )
-          );
-
-        if (fallback) {
-          await savePrimaryLanguage(
-            member.id,
-            fallback
-          );
-        }
+      await member.roles.remove(item.role);
+      const current = await inferPrimaryLanguage(member);
+      if (LANGUAGE_CHANNELS[current].role === item.role) {
+        const fallback = LANGUAGE_KEYS.find(key => key !== current && member.roles.cache.has(LANGUAGE_CHANNELS[key].role));
+        if (fallback) await savePrimaryLanguage(member.id, fallback);
       }
     }
-
     return;
   }
 
-  if (
-    message.id ===
-    preferenceMessages.reminders?.id
-  ) {
-    const item =
-      itemByEmoji(
-        REMINDERS,
-        emoji
-      );
-
-    if (!item) {
-      return;
-    }
-
-    if (adding) {
-      await member.roles.add(
-        item.role
-      );
-    } else {
-      await member.roles.remove(
-        item.role
-      );
-    }
-
+  if (message.id === preferenceMessages.reminders?.id) {
+    const item = itemByEmoji(REMINDERS, emoji);
+    if (!item) return;
+    if (adding) await member.roles.add(item.role); else await member.roles.remove(item.role);
     return;
   }
 
-  if (
-    message.id ===
-    preferenceMessages.tournaments?.id
-  ) {
-    const item =
-      itemByEmoji(
-        TOURNAMENTS,
-        emoji
-      );
-
-    if (!item) {
-      return;
-    }
-
-    if (adding) {
-      await member.roles.add(
-        item.role
-      );
-    } else {
-      await member.roles.remove(
-        item.role
-      );
-    }
-
+  if (message.id === preferenceMessages.tournaments?.id) {
+    const item = itemByEmoji(TOURNAMENTS, emoji);
+    if (!item) return;
+    if (adding) await member.roles.add(item.role); else await member.roles.remove(item.role);
     return;
   }
 
-  if (
-    message.id ===
-    preferenceMessages.playstyle?.id
-  ) {
-    const item =
-      itemByEmoji(
-        PLAYSTYLE,
-        emoji
-      );
-
-    if (!item) {
-      return;
-    }
-
+  if (message.id === preferenceMessages.playstyle?.id) {
+    const item = itemByEmoji(PLAYSTYLE, emoji);
+    if (!item) return;
     if (adding) {
-      for (
-        const other of
-        Object.values(
-          PLAYSTYLE
-        )
-      ) {
-        if (
-          other.role !==
-            item.role &&
-          member.roles.cache.has(
-            other.role
-          )
-        ) {
-          await member.roles.remove(
-            other.role
-          );
-        }
+      for (const other of Object.values(PLAYSTYLE)) {
+        if (other.role !== item.role && member.roles.cache.has(other.role)) await member.roles.remove(other.role);
       }
-
-      await member.roles.add(
-        item.role
-      );
-    } else {
-      await member.roles.remove(
-        item.role
-      );
-    }
-
+      await member.roles.add(item.role);
+    } else await member.roles.remove(item.role);
     return;
   }
 
-  if (
-    message.id ===
-    preferenceMessages.social?.id
-  ) {
-    const item =
-      itemByEmoji(
-        SOCIAL,
-        emoji
-      );
-
-    if (!item) {
-      return;
-    }
-
+  if (message.id === preferenceMessages.social?.id) {
+    const item = itemByEmoji(SOCIAL, emoji);
+    if (!item) return;
     if (adding) {
-      for (
-        const other of
-        Object.values(
-          SOCIAL
-        )
-      ) {
-        if (
-          other.role !==
-            item.role &&
-          member.roles.cache.has(
-            other.role
-          )
-        ) {
-          await member.roles.remove(
-            other.role
-          );
-        }
+      for (const other of Object.values(SOCIAL)) {
+        if (other.role !== item.role && member.roles.cache.has(other.role)) await member.roles.remove(other.role);
       }
-
-      await member.roles.add(
-        item.role
-      );
-    } else {
-      await member.roles.remove(
-        item.role
-      );
-    }
+      await member.roles.add(item.role);
+    } else await member.roles.remove(item.role);
   }
 }
 
@@ -4150,2023 +2953,936 @@ async function reactionRole(
 // MESSAGE EVENTS
 // =====================================================
 
-client.on(
-  Events.MessageCreate,
-  async message => {
-    try {
-      if (
-        !message.guild ||
-        message.author.bot ||
-        message.webhookId
-      ) {
-        return;
-      }
+client.on(Events.MessageCreate, async message => {
+  try {
+    if (!message.guild || message.author.bot || message.webhookId) return;
 
-      if (
-        languageByChannel(
-          message.channel.id
-        )
-      ) {
-        await handleGeneralMessageCreate(
-          message
-        );
-
-        return;
-      }
-    } catch (error) {
-      console.error(
-        "❌ MessageCreate handler:",
-        error
-      );
+    if (languageByChannel(message.channel.id)) {
+      await handleGeneralMessageCreate(message);
+      return;
     }
+
+  } catch (error) {
+    console.error("❌ MessageCreate handler:", error);
   }
-);
+});
 
-client.on(
-  Events.MessageUpdate,
-  async (
-    oldMessage,
-    newMessage
-  ) => {
-    try {
-      if (newMessage.partial) {
-        newMessage =
-          await newMessage.fetch();
-      }
+client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
+  try {
+    if (newMessage.partial) newMessage = await newMessage.fetch();
+    if (!newMessage.guild || newMessage.author?.bot || newMessage.webhookId) return;
+    if (languageByChannel(newMessage.channel.id)) await handleGeneralMessageUpdate(newMessage);
+  } catch (error) {
+    console.error("❌ MessageUpdate handler:", error);
+  }
+});
 
-      if (
-        !newMessage.guild ||
-        newMessage.author?.bot ||
-        newMessage.webhookId
-      ) {
-        return;
-      }
-
-      if (
-        languageByChannel(
-          newMessage.channel.id
-        )
-      ) {
-        await handleGeneralMessageUpdate(
-          newMessage
-        );
-      }
-    } catch (error) {
-      console.error(
-        "❌ MessageUpdate handler:",
-        error
-      );
+client.on(Events.MessageDelete, async message => {
+  try {
+    const mapping = await getGroupByMessageId(message.id).catch(() => null);
+    if (mapping?.is_source) {
+      await deleteTranslatedGroup(mapping.group_id);
+      await removeHighlight(message.id);
+      console.log(`🗑️ Deleted translated copies for ${message.id}`);
+      return;
     }
-  }
-);
-
-client.on(
-  Events.MessageDelete,
-  async message => {
-    try {
-      const mapping =
-        await getGroupByMessageId(
-          message.id
-        ).catch(() => null);
-
-      if (mapping?.is_source) {
-        await deleteTranslatedGroup(
-          mapping.group_id
-        );
-
-        await removeHighlight(
-          message.id
-        );
-
-        console.log(
-          `🗑️ Deleted translated copies for ${message.id}`
-        );
-
-        return;
-      }
-
-      if (
-        mapping &&
-        !mapping.is_source
-      ) {
-        await pool.query(
-          "DELETE FROM translation_messages WHERE message_id = $1",
-          [message.id]
-        );
-
-        await pool.query(
-          "DELETE FROM message_reactions WHERE message_id = $1",
-          [message.id]
-        );
-
-        return;
-      }
-
-      await removeHighlight(
-        message.id
-      );
-    } catch (error) {
-      console.error(
-        "❌ MessageDelete handler:",
-        error
-      );
+    if (mapping && !mapping.is_source) {
+      await pool.query("DELETE FROM translation_messages WHERE message_id = $1", [message.id]);
+      await pool.query("DELETE FROM message_reactions WHERE message_id = $1", [message.id]);
+      return;
     }
+
+    await removeHighlight(message.id);
+  } catch (error) {
+    console.error("❌ MessageDelete handler:", error);
   }
-);
+});
 
 // =====================================================
 // REACTION SYNC + HIGHLIGHTS
 // =====================================================
 
-async function handleReactionChange(
-  reaction,
-  user,
-  adding
-) {
-  if (user.bot) {
+async function handleReactionChange(reaction, user, adding) {
+  if (user.bot) return;
+  if (reaction.partial) await reaction.fetch();
+  if (reaction.message.partial) await reaction.message.fetch();
+
+  // Old reaction-role panels still work.
+  await reactionRole(reaction, user, adding).catch(() => {});
+
+  // In Social channels, 🌐 is a translation request rather than a highlight reaction.
+  if (adding && isReactionTranslateChannel(reaction.message.channel) && emojiKey(reaction.emoji) === SOCIAL_TRANSLATE_EMOJI) {
+    await handleSocialTranslationReaction(reaction, user);
     return;
   }
 
-  if (reaction.partial) {
-    await reaction.fetch();
-  }
-
-  if (reaction.message.partial) {
-    await reaction.message.fetch();
-  }
-
-  await reactionRole(
-    reaction,
-    user,
-    adding
-  ).catch(() => {});
-
-  if (
-    adding &&
-    isSocialChannel(
-      reaction.message.channel
-    ) &&
-    emojiKey(
-      reaction.emoji
-    ) ===
-      SOCIAL_TRANSLATE_EMOJI
-  ) {
-    await handleSocialTranslationReaction(
-      reaction,
-      user
-    );
-
-    return;
-  }
-
-  const mapping =
-    await getGroupByMessageId(
-      reaction.message.id
-    ).catch(() => null);
-
+  const mapping = await getGroupByMessageId(reaction.message.id).catch(() => null);
   if (mapping) {
-    const key =
-      emojiKey(
-        reaction.emoji
-      );
-
+    const key = emojiKey(reaction.emoji);
     if (adding) {
       await pool.query(
-        `INSERT INTO message_reactions(
-           message_id,
-           group_id,
-           user_id,
-           emoji_key
-         )
+        `INSERT INTO message_reactions(message_id, group_id, user_id, emoji_key)
          VALUES($1,$2,$3,$4)
-         ON CONFLICT
-         DO NOTHING`,
-        [
-          reaction.message.id,
-          mapping.group_id,
-          user.id,
-          key
-        ]
+         ON CONFLICT DO NOTHING`,
+        [reaction.message.id, mapping.group_id, user.id, key]
       );
     } else {
       await pool.query(
         "DELETE FROM message_reactions WHERE message_id = $1 AND group_id = $2 AND user_id = $3 AND emoji_key = $4",
-        [
-          reaction.message.id,
-          mapping.group_id,
-          user.id,
-          key
-        ]
+        [reaction.message.id, mapping.group_id, user.id, key]
       );
     }
 
-    await updateReactionSummaries(
-      mapping.group_id
-    );
-
-    if (adding) {
-      await maybeHighlightGroup(
-        mapping.group_id
-      );
-    }
-
+    await updateReactionSummaries(mapping.group_id);
+    if (adding) await maybeHighlightGroup(mapping.group_id);
     return;
   }
 
-  if (adding) {
-    await maybeHighlightNative(
-      reaction.message
-    );
-  }
+  if (adding) await maybeHighlightNative(reaction.message);
 }
 
-client.on(
-  Events.MessageReactionAdd,
-  (
-    reaction,
-    user
-  ) => {
-    void handleReactionChange(
-      reaction,
-      user,
-      true
-    ).catch(error =>
-      console.error(
-        "❌ Reaction add:",
-        error
-      )
-    );
-  }
-);
+client.on(Events.MessageReactionAdd, (reaction, user) => {
+  void handleReactionChange(reaction, user, true).catch(error => console.error("❌ Reaction add:", error));
+});
 
-client.on(
-  Events.MessageReactionRemove,
-  (
-    reaction,
-    user
-  ) => {
-    void handleReactionChange(
-      reaction,
-      user,
-      false
-    ).catch(error =>
-      console.error(
-        "❌ Reaction remove:",
-        error
-      )
-    );
-  }
-);
+client.on(Events.MessageReactionRemove, (reaction, user) => {
+  void handleReactionChange(reaction, user, false).catch(error => console.error("❌ Reaction remove:", error));
+});
+
 // =====================================================
 // INTERACTIONS
 // =====================================================
 
-client.on(
-  Events.InteractionCreate,
-  async interaction => {
-    try {
+client.on(Events.InteractionCreate, async interaction => {
+  try {
+    // -------------------------------------------------
+    // HELP BUTTONS
+    // -------------------------------------------------
+    if (interaction.isButton() && interaction.customId === "help_game") {
+      return interaction.showModal(createHelpModal("modal_game_help", "Game Help", "What do you need help with?", "Explain what you're stuck on..."));
+    }
+    if (interaction.isButton() && interaction.customId === "help_team") {
+      return interaction.showModal(createHelpModal("modal_team_help", "Find a Team", "What are you looking for?", "Tell everyone what you need teammates for..."));
+    }
+    if (interaction.isButton() && interaction.customId === "help_staff") {
+      return interaction.showModal(createHelpModal("modal_staff_help", "Contact Ashen Staff", "What would you like staff to know?", "Explain your request or concern..."));
+    }
+    if (interaction.isButton() && interaction.customId === "help_discord") {
+      return interaction.showModal(createHelpModal("modal_discord_help", "Discord Help", "What do you need help with?", "Explain the Discord or server issue..."));
+    }
+    if (interaction.isButton() && interaction.customId === "help_faq") {
+      return interaction.reply({
+        content:
+          "# ❓ Ashen FAQ\n\n" +
+          `🌎 **Languages / notification language:** <#${CHANNELS.PREFERENCES}>\n` +
+          `🔔 **Reminder pings:** <#${CHANNELS.PREFERENCES}>\n` +
+          "🌐 **Quick translation:** in supported text channels, react 🌐 to a message and Vestra will temporarily translate it into your primary language.\n" +
+          "🛡️ **Private staff help:** use Ask Staff in this Help Center.",
+        flags: MessageFlags.Ephemeral
+      });
+    }
+    if (interaction.isButton() && interaction.customId === "help_guide") {
+      return interaction.reply({
+        content:
+          `# 🧭 Ashen Server Guide\n\n📍 <#${CHANNELS.START_HERE}> — Start here\n📜 <#${CHANNELS.RULES}> — Rules\n🌎 <#${CHANNELS.ONBOARDING}> — Onboarding\n✨ <#${CHANNELS.PREFERENCES}> — Vestra settings\n👋 <#${CHANNELS.INTRODUCTIONS}> — Introductions\n🆘 <#${CHANNELS.HELP}> — Help Center`,
+        flags: MessageFlags.Ephemeral
+      });
+    }
 
-      // -------------------------------------------------
-      // HELP BUTTONS
-      // -------------------------------------------------
+    // -------------------------------------------------
+    // HELP MODALS
+    // -------------------------------------------------
+    if (interaction.isModalSubmit() && interaction.customId === "modal_game_help") {
+      return createHelpThread(interaction, "Game Help", "🎮", interaction.fields.getTextInputValue("help_details"));
+    }
+    if (interaction.isModalSubmit() && interaction.customId === "modal_team_help") {
+      return createHelpThread(interaction, "Looking for a Team", "👥", interaction.fields.getTextInputValue("help_details"));
+    }
+    if (interaction.isModalSubmit() && interaction.customId === "modal_discord_help") {
+      return createHelpThread(interaction, "Discord Help", "⚙️", interaction.fields.getTextInputValue("help_details"));
+    }
+    if (interaction.isModalSubmit() && interaction.customId === "modal_staff_help") {
+      const details = interaction.fields.getTextInputValue("help_details");
+      const staffChannel = await interaction.guild.channels.fetch(CHANNELS.STAFF_REQUESTS);
 
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "help_game"
-      ) {
-        return interaction.showModal(
-          createHelpModal(
-            "modal_game_help",
-            "Game Help",
-            "What do you need help with?",
-            "Explain what you're stuck on..."
-          )
-        );
-      }
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "help_team"
-      ) {
-        return interaction.showModal(
-          createHelpModal(
-            "modal_team_help",
-            "Find a Team",
-            "What are you looking for?",
-            "Tell everyone what you need teammates for..."
-          )
-        );
-      }
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "help_staff"
-      ) {
-        return interaction.showModal(
-          createHelpModal(
-            "modal_staff_help",
-            "Contact Ashen Staff",
-            "What would you like staff to know?",
-            "Explain your request or concern..."
-          )
-        );
-      }
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "help_discord"
-      ) {
-        return interaction.showModal(
-          createHelpModal(
-            "modal_discord_help",
-            "Discord Help",
-            "What do you need help with?",
-            "Explain the Discord or server issue..."
-          )
-        );
-      }
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "help_faq"
-      ) {
+      if (!staffChannel?.isTextBased()) {
         return interaction.reply({
-          content:
-            "# ❓ Ashen FAQ\n\n" +
-
-            `🌎 **Languages / notification language:** <#${CHANNELS.PREFERENCES}>\n` +
-
-            `🔔 **Reminder pings:** <#${CHANNELS.PREFERENCES}>\n` +
-
-            "🌐 **Social translation:** react 🌐 to a message and Vestra will temporarily translate it into your primary language.\n" +
-
-            "🛡️ **Private staff help:** use Ask Staff in this Help Center.",
-
-          flags:
-            MessageFlags.Ephemeral
+          content: "❌ Vestra couldn't reach the staff request channel.",
+          flags: MessageFlags.Ephemeral
         });
       }
 
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "help_guide"
-      ) {
-        return interaction.reply({
-          content:
-            `# 🧭 Ashen Server Guide\n\n` +
-
-            `📍 <#${CHANNELS.START_HERE}> — Start here\n` +
-
-            `📜 <#${CHANNELS.RULES}> — Rules\n` +
-
-            `🌎 <#${CHANNELS.ONBOARDING}> — Onboarding\n` +
-
-            `✨ <#${CHANNELS.PREFERENCES}> — Vestra settings\n` +
-
-            `👋 <#${CHANNELS.INTRODUCTIONS}> — Introductions\n` +
-
-            `🆘 <#${CHANNELS.HELP}> — Help Center`,
-
-          flags:
-            MessageFlags.Ephemeral
-        });
-      }
-
-      // -------------------------------------------------
-      // HELP MODALS
-      // -------------------------------------------------
-
-      if (
-        interaction.isModalSubmit() &&
-        interaction.customId ===
-          "modal_game_help"
-      ) {
-        return createHelpThread(
-          interaction,
-          "Game Help",
-          "🎮",
-          interaction.fields
-            .getTextInputValue(
-              "help_details"
-            )
-        );
-      }
-
-      if (
-        interaction.isModalSubmit() &&
-        interaction.customId ===
-          "modal_team_help"
-      ) {
-        return createHelpThread(
-          interaction,
-          "Looking for a Team",
-          "👥",
-          interaction.fields
-            .getTextInputValue(
-              "help_details"
-            )
-        );
-      }
-
-      if (
-        interaction.isModalSubmit() &&
-        interaction.customId ===
-          "modal_discord_help"
-      ) {
-        return createHelpThread(
-          interaction,
-          "Discord Help",
-          "⚙️",
-          interaction.fields
-            .getTextInputValue(
-              "help_details"
-            )
-        );
-      }
-
-      if (
-        interaction.isModalSubmit() &&
-        interaction.customId ===
-          "modal_staff_help"
-      ) {
-        const details =
-          interaction.fields
-            .getTextInputValue(
-              "help_details"
-            );
-
-        const staffChannel =
-          await interaction.guild.channels
-            .fetch(
-              CHANNELS.STAFF_REQUESTS
-            );
-
-        if (
-          !staffChannel?.isTextBased()
-        ) {
-          return interaction.reply({
-            content:
-              "❌ Vestra couldn't reach the staff request channel.",
-
-            flags:
-              MessageFlags.Ephemeral
-          });
-        }
-
-        await staffChannel.send({
-          content:
-            "# 🛡️ New Staff Request\n\n" +
-
-            `<@&${STAFF_ROLES.LEADER}> ` +
-
-            `<@&${STAFF_ROLES.DEPUTY}> ` +
-
-            `<@&${STAFF_ROLES.OFFICERS}>\n\n` +
-
-            `**Member:** ${interaction.member}\n` +
-
-            `**User:** ${interaction.user.username}\n\n` +
-
-            `**Request:**\n${details}`,
-
-          allowedMentions: {
-            parse: [],
-
-            roles: [
-              STAFF_ROLES.LEADER,
-              STAFF_ROLES.DEPUTY,
-              STAFF_ROLES.OFFICERS
-            ]
-          }
-        });
-
-        return interaction.reply({
-          content:
-            "✅ Your message was sent privately to Ashen staff.",
-
-          flags:
-            MessageFlags.Ephemeral
-        });
-      }
-
-      // -------------------------------------------------
-      // ONBOARDING
-      // -------------------------------------------------
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "start_onboarding"
-      ) {
-        sessions.set(
-          interaction.user.id,
+      const requestEmbed = brandEmbed(
+        "🛡️ New Staff Request",
+        details
+      )
+        .addFields(
           {
-            language:
-              null,
-
-            reminders:
-              [],
-
-            playstyle:
-              null,
-
-            social:
-              null
-          }
-        );
-
-        return interaction.reply({
-          content:
-            "# 🌎 Choose your primary language\n\n" +
-            "This also becomes your default Vestra notification language.",
-
-          components: [
-            languageMenu()
-          ],
-
-          flags:
-            MessageFlags.Ephemeral
-        });
-      }
-
-      if (
-        interaction.isStringSelectMenu() &&
-        interaction.customId ===
-          "onboard_language"
-      ) {
-        const language =
-          interaction.values[0];
-
-        const session =
-          sessions.get(
-            interaction.user.id
-          ) || {};
-
-        Object.assign(
-          session,
+            name: "👤 Member",
+            value: `${interaction.member}`,
+            inline: true
+          },
           {
-            language,
-            reminders:
-              [],
-            playstyle:
-              null,
-            social:
-              null
+            name: "🪪 Username",
+            value: interaction.user.username,
+            inline: true
+          },
+          {
+            name: "📌 Status",
+            value: "New • Needs Review",
+            inline: true
           }
-        );
+        )
+        .setFooter({ text: "Vestra • Private Staff Request" })
+        .setTimestamp();
 
-        sessions.set(
-          interaction.user.id,
-          session
-        );
-
-        return interaction.update({
-          content:
-            `# ${TEXT[language].welcome}\n\n` +
-            `## 🔔 ${TEXT[language].reminders}`,
-
-          components: [
-            reminderMenu(
-              language
-            )
+      await staffChannel.send({
+        content: `<@&${STAFF_ROLES.LEADER}> <@&${STAFF_ROLES.DEPUTY}> <@&${STAFF_ROLES.OFFICERS}>`,
+        embeds: [requestEmbed],
+        allowedMentions: {
+          parse: [],
+          roles: [
+            STAFF_ROLES.LEADER,
+            STAFF_ROLES.DEPUTY,
+            STAFF_ROLES.OFFICERS
           ]
-        });
-      }
-
-      if (
-        interaction.isStringSelectMenu() &&
-        interaction.customId ===
-          "onboard_reminders"
-      ) {
-        const session =
-          sessions.get(
-            interaction.user.id
-          );
-
-        if (!session) {
-          return;
         }
+      });
 
-        session.reminders =
-          interaction.values.includes(
-            "none"
+      return interaction.reply({
+        content: "✅ Your message was sent privately to Ashen staff.",
+        flags: MessageFlags.Ephemeral
+      });
+    }
+
+    // -------------------------------------------------
+    // ONBOARDING
+    // -------------------------------------------------
+
+    if (
+      interaction.isButton() &&
+      interaction.customId === "start_onboarding"
+    ) {
+      await interaction.deferReply({
+        flags: MessageFlags.Ephemeral
+      });
+
+      const session = {
+        language: null,
+        reminders: [],
+        playstyle: null,
+        social: null
+      };
+
+      await saveOnboardingSession(
+        interaction.user.id,
+        session
+      );
+
+      return interaction.editReply({
+        embeds: [
+          onboardingEmbed(
+            "STEP 1 OF 4",
+            "🌎 Choose Your Primary Language",
+            `Pick the language Vestra should use for your **notifications** and 🌐 reaction translations.
+
+You can unlock additional language chats later in Role Preferences.`
           )
-            ? []
-            : interaction.values
-                .filter(
-                  x =>
-                    x !==
-                    "none"
-                );
+        ],
+        components: [
+          languageMenu()
+        ]
+      });
+    }
 
-        return interaction.update({
-          content:
-            `# 🎮 ${TEXT[session.language].playstyle}`,
+    if (
+      interaction.isStringSelectMenu() &&
+      interaction.customId === "onboard_language"
+    ) {
+      await interaction.deferUpdate();
 
-          components: [
-            playstyleMenu(
-              session.language
-            )
-          ]
-        });
-      }
+      const language =
+        interaction.values[0];
 
-      if (
-        interaction.isStringSelectMenu() &&
-        interaction.customId ===
-          "onboard_playstyle"
-      ) {
-        const session =
-          sessions.get(
-            interaction.user.id
-          );
+      const session =
+        await getOnboardingSession(
+          interaction.user.id
+        ) || {
+          language: null,
+          reminders: [],
+          playstyle: null,
+          social: null
+        };
 
-        if (!session) {
-          return;
-        }
+      session.language =
+        language;
 
-        session.playstyle =
-          interaction.values[0] ===
-          "skip"
-            ? null
-            : interaction.values[0];
+      session.reminders =
+        [];
 
-        return interaction.update({
-          content:
-            `# 💬 ${TEXT[session.language].social}`,
+      session.playstyle =
+        null;
 
-          components: [
-            socialMenu(
-              session.language
-            )
-          ]
-        });
-      }
+      session.social =
+        null;
 
-      if (
-        interaction.isStringSelectMenu() &&
-        interaction.customId ===
-          "onboard_social"
-      ) {
-        const session =
-          sessions.get(
-            interaction.user.id
-          );
+      await saveOnboardingSession(
+        interaction.user.id,
+        session
+      );
 
-        if (!session) {
-          return;
-        }
+      return interaction.editReply({
+        embeds: [
+          onboardingEmbed(
+            "STEP 2 OF 4",
+            "🔔 Choose Your Pings",
+            `${TEXT[language].reminders}
 
-        session.social =
-          interaction.values[0] ===
-          "skip"
-            ? null
-            : interaction.values[0];
+Choose **as many as you want**. This includes regular guild reminders plus Server Tournament and Nexus Tournament alerts. You can change these anytime.`
+          )
+        ],
+        components: [
+          reminderMenu(
+            language
+          )
+        ]
+      });
+    }
 
-        return interaction.update({
-          content:
-            "✅ Ready to finish!",
+    if (
+      interaction.isStringSelectMenu() &&
+      interaction.customId === "onboard_reminders"
+    ) {
+      await interaction.deferUpdate();
 
-          components: [
-            finishButton(
-              session.language
-            )
-          ]
-        });
-      }
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "onboard_finish"
-      ) {
-        await interaction.deferUpdate();
-
-        const session =
-          sessions.get(
-            interaction.user.id
-          );
-
-        if (!session) {
-          return interaction.editReply({
-            content:
-              "Your onboarding session expired. Please start again.",
-
-            components:
-              []
-          });
-        }
-
-        const member =
-          await interaction.guild.members
-            .fetch(
-              interaction.user.id
-            );
-
-        for (
-          const roleId of
-          RESETTABLE_ROLES
-        ) {
-          if (
-            PROTECTED_ROLES.has(
-              roleId
-            )
-          ) {
-            continue;
-          }
-
-          if (
-            member.roles.cache.has(
-              roleId
-            )
-          ) {
-            await member.roles
-              .remove(roleId)
-              .catch(() => {});
-          }
-        }
-
-        await member.roles.add(
-          ASHEN_WARRIORS
-        );
-
-        await member.roles.add(
-          LANGUAGES[
-            session.language
-          ].role
-        );
-
-        for (
-          const key of
-          session.reminders
-        ) {
-          if (REMINDERS[key]) {
-            await member.roles.add(
-              REMINDERS[key].role
-            );
-          }
-        }
-
-        if (session.playstyle) {
-          await member.roles.add(
-            PLAYSTYLE[
-              session.playstyle
-            ].role
-          );
-        }
-
-        if (session.social) {
-          await member.roles.add(
-            SOCIAL[
-              session.social
-            ].role
-          );
-        }
-
-        await member.roles.add(
-          ONBOARDING_COMPLETE
-        );
-
-        await savePrimaryLanguage(
-          member.id,
-          session.language
-        );
-
-        const intro =
-          await interaction.guild.channels
-            .fetch(
-              CHANNELS.INTRODUCTIONS
-            )
-            .catch(() => null);
-
-        if (
-          intro?.isTextBased()
-        ) {
-          await intro.send({
-            content:
-              `${member}`,
-
-            embeds: [
-              welcomeCard(
-                member,
-
-                LANGUAGES[
-                  session.language
-                ].name,
-
-                session.playstyle
-                  ? PLAYSTYLE[
-                      session.playstyle
-                    ].name
-                  : "Not specified",
-
-                session.social
-                  ? SOCIAL[
-                      session.social
-                    ].name
-                  : "Not specified"
-              )
-            ],
-
-            allowedMentions: {
-              parse: [],
-              users: [
-                member.id
-              ]
-            }
-          });
-        }
-
-        sessions.delete(
+      const session =
+        await getOnboardingSession(
           interaction.user.id
         );
 
+      if (!session) {
         return interaction.editReply({
-          content:
-            `# ✅ ${TEXT[session.language].done}`,
-
-          components:
-            []
-        });
-      }
-            // -------------------------------------------------
-      // SETTINGS HOME
-      // -------------------------------------------------
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "settings_open"
-      ) {
-        const payload = {
           embeds: [
-            settingsHomeEmbed()
+            brandEmbed(
+              "⚠️ Onboarding Session Missing",
+              "Your onboarding session could not be found. Press **Start Onboarding** again and Vestra will restart it for you."
+            )
           ],
-
-          components:
-            settingsHomeComponents()
-        };
-
-        if (
-          interaction.message
-            ?.flags
-            ?.has
-            ?.(MessageFlags.Ephemeral)
-        ) {
-          return interaction.update(
-            payload
-          );
-        }
-
-        return interaction.reply({
-          ...payload,
-
-          flags:
-            MessageFlags.Ephemeral
+          components: []
         });
       }
 
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "settings_back"
-      ) {
-        return interaction.update({
-          embeds: [
-            settingsHomeEmbed()
-          ],
-
-          components:
-            settingsHomeComponents()
-        });
-      }
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "settings_card"
-      ) {
-        const member =
-          await interaction.guild.members
-            .fetch(
-              interaction.user.id
-            );
-
-        const embed =
-          await memberCardEmbed(
-            member
-          );
-
-        if (
-          interaction.message
-            ?.flags
-            ?.has
-            ?.(MessageFlags.Ephemeral)
-        ) {
-          return interaction.update({
-            embeds: [embed],
-
-            components: [
-              backButtonRow()
-            ]
-          });
-        }
-
-        return interaction.reply({
-          embeds: [embed],
-
-          components: [
-            backButtonRow()
-          ],
-
-          flags:
-            MessageFlags.Ephemeral
-        });
-      }
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "settings_languages"
-      ) {
-        const member =
-          await interaction.guild.members
-            .fetch(
-              interaction.user.id
-            );
-
-        const selected =
-          LANGUAGE_KEYS.filter(
-            key =>
-              member.roles.cache.has(
-                LANGUAGE_CHANNELS[
-                  key
-                ].role
-              )
-          );
-
-        const menu =
-          new StringSelectMenuBuilder()
-            .setCustomId(
-              "settings_languages_select"
-            )
-            .setPlaceholder(
-              "Choose every language channel you want"
-            )
-            .setMinValues(1)
-            .setMaxValues(
-              LANGUAGE_KEYS.length
-            )
-            .addOptions(
-              LANGUAGE_KEYS.map(
-                key => ({
-                  label:
-                    LANGUAGE_CHANNELS[
-                      key
-                    ].name,
-
-                  value:
-                    key,
-
-                  emoji:
-                    LANGUAGE_CHANNELS[
-                      key
-                    ].emoji,
-
-                  default:
-                    selected.includes(
-                      key
-                    )
-                })
-              )
-            );
-
-        return interaction.update({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle(
-                "🌎 Language Access"
-              )
-              .setDescription(
-                "Choose every General language channel you want to see."
-              )
-          ],
-
-          components: [
-            new ActionRowBuilder()
-              .addComponents(
-                menu
-              ),
-
-            backButtonRow()
-          ]
-        });
-      }
-
-      if (
-        interaction.isStringSelectMenu() &&
-        interaction.customId ===
-          "settings_languages_select"
-      ) {
-        const member =
-          await interaction.guild.members
-            .fetch(
-              interaction.user.id
-            );
-
-        const selected =
-          new Set(
-            interaction.values
-          );
-
-        for (
-          const key of
-          LANGUAGE_KEYS
-        ) {
-          const role =
-            LANGUAGE_CHANNELS[
-              key
-            ].role;
-
-          if (
-            selected.has(
-              key
-            ) &&
-            !member.roles.cache.has(
-              role
-            )
-          ) {
-            await member.roles
-              .add(role)
-              .catch(() => {});
-          }
-
-          if (
-            !selected.has(
-              key
-            ) &&
-            member.roles.cache.has(
-              role
-            )
-          ) {
-            await member.roles
-              .remove(role)
-              .catch(() => {});
-          }
-        }
-
-        const primary =
-          await inferPrimaryLanguage(
-            member
-          );
-
-        if (
-          !selected.has(
-            primary
-          )
-        ) {
-          await savePrimaryLanguage(
-            member.id,
-            interaction.values[0]
-          );
-        }
-
-        return interaction.update({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle(
-                "✅ Language Access Updated"
-              )
-              .setDescription(
-                "Your language channel access has been saved."
-              )
-          ],
-
-          components: [
-            backButtonRow()
-          ]
-        });
-      }
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "settings_notify"
-      ) {
-        const member =
-          await interaction.guild.members
-            .fetch(
-              interaction.user.id
-            );
-
-        const current =
-          await inferPrimaryLanguage(
-            member
-          );
-
-        const menu =
-          new StringSelectMenuBuilder()
-            .setCustomId(
-              "settings_notify_select"
-            )
-            .setPlaceholder(
-              "Choose one notification language"
-            )
-            .addOptions(
-              LANGUAGE_KEYS.map(
-                key => ({
-                  label:
-                    LANGUAGE_CHANNELS[
-                      key
-                    ].name,
-
-                  value:
-                    key,
-
-                  emoji:
-                    LANGUAGE_CHANNELS[
-                      key
-                    ].emoji,
-
-                  default:
-                    current === key
-                })
-              )
-            );
-
-        return interaction.update({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle(
-                "🔔 Primary Notification Language"
-              )
-              .setDescription(
-                "Vestra sends your event pings **once**, in this language's General channel."
-              )
-          ],
-
-          components: [
-            new ActionRowBuilder()
-              .addComponents(menu),
-
-            backButtonRow()
-          ]
-        });
-      }
-
-      if (
-        interaction.isStringSelectMenu() &&
-        interaction.customId ===
-          "settings_notify_select"
-      ) {
-        const member =
-          await interaction.guild.members
-            .fetch(
-              interaction.user.id
-            );
-
-        const key =
-          interaction.values[0];
-
-        if (
-          !member.roles.cache.has(
-            LANGUAGE_CHANNELS[
-              key
-            ].role
-          )
-        ) {
-          await member.roles.add(
-            LANGUAGE_CHANNELS[
-              key
-            ].role
-          );
-        }
-
-        await savePrimaryLanguage(
-          member.id,
-          key
-        );
-
-        return interaction.update({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle(
-                "✅ Notification Language Updated"
-              )
-              .setDescription(
-                `${LANGUAGE_CHANNELS[key].emoji} Vestra will notify you in **${LANGUAGE_CHANNELS[key].name}**.`
-              )
-          ],
-
-          components: [
-            backButtonRow()
-          ]
-        });
-      }
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "settings_reminders"
-      ) {
-        const member =
-          await interaction.guild.members
-            .fetch(
-              interaction.user.id
-            );
-
-        const selected =
-          Object.entries(
-            REMINDERS
-          )
-            .filter(
-              ([, item]) =>
-                member.roles.cache.has(
-                  item.role
-                )
-            )
-            .map(
-              ([key]) =>
-                key
-            );
-
-        const menu =
-          new StringSelectMenuBuilder()
-            .setCustomId(
-              "settings_reminders_select"
-            )
-            .setPlaceholder(
-              "Choose game alerts"
-            )
-            .setMinValues(1)
-            .setMaxValues(8)
-            .addOptions(
-              ...Object.entries(
-                REMINDERS
-              ).map(
-                ([key, item]) => ({
-                  label:
-                    item.name,
-
-                  value:
-                    key,
-
-                  emoji:
-                    item.emoji,
-
-                  default:
-                    selected.includes(
-                      key
-                    )
-                })
-              ),
-
-              {
-                label:
-                  "No game pings",
-
-                value:
-                  "none",
-
-                emoji:
-                  "🔕",
-
-                default:
-                  selected.length ===
-                  0
-              }
-            );
-
-        return interaction.update({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle(
-                "⏰ Game Reminder Pings"
-              )
-              .setDescription(
-                "Choose the events you want Vestra to notify you about."
-              )
-          ],
-
-          components: [
-            new ActionRowBuilder()
-              .addComponents(menu),
-
-            backButtonRow()
-          ]
-        });
-      }
-
-      if (
-        interaction.isStringSelectMenu() &&
-        interaction.customId ===
-          "settings_reminders_select"
-      ) {
-        const member =
-          await interaction.guild.members
-            .fetch(
-              interaction.user.id
-            );
-
-        const selected =
-          interaction.values.includes(
-            "none"
-          )
-            ? new Set()
-            : new Set(
-                interaction.values
-              );
-
-        for (
-          const [
-            key,
-            item
-          ] of Object.entries(
-            REMINDERS
-          )
-        ) {
-          if (
-            selected.has(
-              key
-            ) &&
-            !member.roles.cache.has(
-              item.role
-            )
-          ) {
-            await member.roles
-              .add(item.role)
-              .catch(() => {});
-          }
-
-          if (
-            !selected.has(
-              key
-            ) &&
-            member.roles.cache.has(
-              item.role
-            )
-          ) {
-            await member.roles
-              .remove(item.role)
-              .catch(() => {});
-          }
-        }
-
-        return interaction.update({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle(
-                "✅ Game Pings Updated"
-              )
-          ],
-
-          components: [
-            backButtonRow()
-          ]
-        });
-      }
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "settings_tournaments"
-      ) {
-        const member =
-          await interaction.guild.members
-            .fetch(
-              interaction.user.id
-            );
-
-        const selected =
-          Object.entries(
-            TOURNAMENTS
-          )
-            .filter(
-              ([, item]) =>
-                member.roles.cache.has(
-                  item.role
-                )
-            )
-            .map(
-              ([key]) =>
-                key
-            );
-
-        const menu =
-          new StringSelectMenuBuilder()
-            .setCustomId(
-              "settings_tournaments_select"
-            )
-            .setPlaceholder(
-              "Choose tournament vote alerts"
-            )
-            .setMinValues(1)
-            .setMaxValues(3)
-            .addOptions(
-              {
-                label:
-                  "Server Tournament",
-
-                value:
-                  "sever",
-
-                emoji:
-                  "⚔️",
-
-                default:
-                  selected.includes(
-                    "sever"
-                  )
-              },
-
-              {
-                label:
-                  "Nexus Tournament",
-
-                value:
-                  "nexus",
-
-                emoji:
-                  "🌀",
-
-                default:
-                  selected.includes(
-                    "nexus"
-                  )
-              },
-
-              {
-                label:
-                  "No tournament pings",
-
-                value:
-                  "none",
-
-                emoji:
-                  "🔕",
-
-                default:
-                  selected.length ===
-                  0
-              }
-            );
-
-        return interaction.update({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle(
-                "🏆 Tournament Vote Pings"
-              )
-              .setDescription(
-                "Opt in to Server Tournament, Nexus Tournament, both, or neither."
-              )
-          ],
-
-          components: [
-            new ActionRowBuilder()
-              .addComponents(
-                menu
-              ),
-
-            backButtonRow()
-          ]
-        });
-      }
-
-      if (
-        interaction.isStringSelectMenu() &&
-        interaction.customId ===
-          "settings_tournaments_select"
-      ) {
-        const member =
-          await interaction.guild.members
-            .fetch(
-              interaction.user.id
-            );
-
-        const selected =
-          interaction.values.includes(
-            "none"
-          )
-            ? new Set()
-            : new Set(
-                interaction.values
-              );
-
-        for (
-          const [
-            key,
-            item
-          ] of Object.entries(
-            TOURNAMENTS
-          )
-        ) {
-          if (
-            selected.has(
-              key
-            ) &&
-            !member.roles.cache.has(
-              item.role
-            )
-          ) {
-            await member.roles
-              .add(item.role)
-              .catch(() => {});
-          }
-
-          if (
-            !selected.has(
-              key
-            ) &&
-            member.roles.cache.has(
-              item.role
-            )
-          ) {
-            await member.roles
-              .remove(item.role)
-              .catch(() => {});
-          }
-        }
-
-        return interaction.update({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle(
-                "✅ Tournament Pings Updated"
-              )
-          ],
-
-          components: [
-            backButtonRow()
-          ]
-        });
-      }
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "settings_playstyle"
-      ) {
-        const menu =
-          new StringSelectMenuBuilder()
-            .setCustomId(
-              "settings_playstyle_select"
-            )
-            .setPlaceholder(
-              "Choose your playstyle"
-            )
-            .addOptions(
-              ...Object.entries(
-                PLAYSTYLE
-              ).map(
-                ([key, item]) => ({
-                  label:
-                    item.name,
-
-                  value:
-                    key,
-
-                  emoji:
-                    item.emoji
-                })
-              ),
-
-              {
-                label:
-                  "None",
-
-                value:
-                  "none",
-
-                emoji:
-                  "⏭️"
-              }
-            );
-
-        return interaction.update({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle(
-                "🎮 Playstyle"
-              )
-          ],
-
-          components: [
-            new ActionRowBuilder()
-              .addComponents(menu),
-
-            backButtonRow()
-          ]
-        });
-      }
-
-      if (
-        interaction.isStringSelectMenu() &&
-        interaction.customId ===
-          "settings_playstyle_select"
-      ) {
-        const member =
-          await interaction.guild.members
-            .fetch(
-              interaction.user.id
-            );
-
-        const selected =
-          interaction.values[0] ===
+      session.reminders =
+        interaction.values.includes(
           "none"
-            ? null
-            : interaction.values[0];
-
-        await updateSingleChoiceRole(
-          member,
-          PLAYSTYLE,
-          selected
-        );
-
-        return interaction.update({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle(
-                "✅ Playstyle Updated"
-              )
-          ],
-
-          components: [
-            backButtonRow()
-          ]
-        });
-      }
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "settings_social"
-      ) {
-        const menu =
-          new StringSelectMenuBuilder()
-            .setCustomId(
-              "settings_social_select"
-            )
-            .setPlaceholder(
-              "Choose your social preference"
-            )
-            .addOptions(
-              ...Object.entries(
-                SOCIAL
-              ).map(
-                ([key, item]) => ({
-                  label:
-                    item.name,
-
-                  value:
-                    key,
-
-                  emoji:
-                    item.emoji
-                })
-              ),
-
-              {
-                label:
-                  "None",
-
-                value:
-                  "none",
-
-                emoji:
-                  "⏭️"
-              }
+        )
+          ? []
+          : interaction.values.filter(
+              value =>
+                value !== "none"
             );
 
-        return interaction.update({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle(
-                "💬 Social Preference"
-              )
-          ],
-
-          components: [
-            new ActionRowBuilder()
-              .addComponents(menu),
-
-            backButtonRow()
-          ]
-        });
-      }
-
-      if (
-        interaction.isStringSelectMenu() &&
-        interaction.customId ===
-          "settings_social_select"
-      ) {
-        const member =
-          await interaction.guild.members
-            .fetch(
-              interaction.user.id
-            );
-
-        const selected =
-          interaction.values[0] ===
-          "none"
-            ? null
-            : interaction.values[0];
-
-        await updateSingleChoiceRole(
-          member,
-          SOCIAL,
-          selected
-        );
-
-        return interaction.update({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle(
-                "✅ Social Preference Updated"
-              )
-          ],
-
-          components: [
-            backButtonRow()
-          ]
-        });
-      }
-            // -------------------------------------------------
-      // TOURNAMENT STAFF CONTROLS
-      // -------------------------------------------------
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "tournament_next"
-      ) {
-        const member =
-          await interaction.guild.members
-            .fetch(
-              interaction.user.id
-            );
-
-        if (!isStaff(member)) {
-          return interaction.reply({
-            content:
-              "❌ Only Ashen staff can advance tournament rounds.",
-
-            flags:
-              MessageFlags.Ephemeral
-          });
-        }
-
-        const state =
-          await getActiveTournamentState();
-
-        if (
-          !state ||
-          state.phase !==
-            "battle"
-        ) {
-          return interaction.reply({
-            content:
-              "❌ There isn't a battle waiting for the next vote right now.",
-
-            flags:
-              MessageFlags.Ephemeral
-          });
-        }
-
-        const tournament =
-          TOURNAMENTS[
-            state.tournament
-          ];
-
-        if (
-          state.round >=
-          tournament.rounds
-        ) {
-          return interaction.reply({
-            content:
-              "Round 4 is already complete. Use Finish Tournament after the final battle.",
-
-            flags:
-              MessageFlags.Ephemeral
-          });
-        }
-
-        await startTournamentVote(
-          state.tournament,
-          state.round + 1,
-          true
-        );
-
-        return interaction.reply({
-          content:
-            `✅ Round ${state.round + 1} voting opened.`,
-
-          flags:
-            MessageFlags.Ephemeral
-        });
-      }
-
-      if (
-        interaction.isButton() &&
-        interaction.customId ===
-          "tournament_finish"
-      ) {
-        const member =
-          await interaction.guild.members
-            .fetch(
-              interaction.user.id
-            );
-
-        if (!isStaff(member)) {
-          return interaction.reply({
-            content:
-              "❌ Only Ashen staff can finish Tournament Mode.",
-
-            flags:
-              MessageFlags.Ephemeral
-          });
-        }
-
-        const state =
-          await getActiveTournamentState();
-
-        if (!state) {
-          return interaction.reply({
-            content:
-              "❌ No active tournament.",
-
-            flags:
-              MessageFlags.Ephemeral
-          });
-        }
-
-        await finishTournament(
-          state.tournament
-        );
-
-        return interaction.reply({
-          content:
-            "🏁 Tournament Mode finished. The Live Event Board is back to normal.",
-
-          flags:
-            MessageFlags.Ephemeral
-        });
-      }
-
-    } catch (error) {
-      console.error(
-        "❌ Interaction error:",
-        error
+      await saveOnboardingSession(
+        interaction.user.id,
+        session
       );
 
-      try {
-        if (
-          interaction.isRepliable() &&
-          !interaction.replied &&
-          !interaction.deferred
-        ) {
-          await interaction.reply({
-            content:
-              "❌ Something went wrong. Please try again.",
+      return interaction.editReply({
+        embeds: [
+          onboardingEmbed(
+            "STEP 3 OF 4",
+            "🎮 Choose Your Playstyle",
+            `${TEXT[session.language].playstyle}
 
-            flags:
-              MessageFlags.Ephemeral
-          });
-        } else if (
-          interaction.isRepliable() &&
-          interaction.deferred
-        ) {
-          await interaction.editReply(
-            "❌ Something went wrong. Please try again."
-          );
-        }
-      } catch {}
+This is just for fun and helps other members get a feel for how you like to play.`
+          )
+        ],
+        components: [
+          playstyleMenu(
+            session.language
+          )
+        ]
+      });
     }
+
+    if (
+      interaction.isStringSelectMenu() &&
+      interaction.customId === "onboard_playstyle"
+    ) {
+      await interaction.deferUpdate();
+
+      const session =
+        await getOnboardingSession(
+          interaction.user.id
+        );
+
+      if (!session) {
+        return interaction.editReply({
+          embeds: [
+            brandEmbed(
+              "⚠️ Onboarding Session Missing",
+              "Press **Start Onboarding** again to restart your setup."
+            )
+          ],
+          components: []
+        });
+      }
+
+      session.playstyle =
+        interaction.values[0] ===
+        "skip"
+          ? null
+          : interaction.values[0];
+
+      await saveOnboardingSession(
+        interaction.user.id,
+        session
+      );
+
+      return interaction.editReply({
+        embeds: [
+          onboardingEmbed(
+            "STEP 4 OF 4",
+            "💬 Choose Your Social Vibe",
+            `${TEXT[session.language].social}
+
+There’s no wrong answer — this just gives the community a small hint about how you like to interact.`
+          )
+        ],
+        components: [
+          socialMenu(
+            session.language
+          )
+        ]
+      });
+    }
+
+    if (
+      interaction.isStringSelectMenu() &&
+      interaction.customId === "onboard_social"
+    ) {
+      await interaction.deferUpdate();
+
+      const session =
+        await getOnboardingSession(
+          interaction.user.id
+        );
+
+      if (!session) {
+        return interaction.editReply({
+          embeds: [
+            brandEmbed(
+              "⚠️ Onboarding Session Missing",
+              "Press **Start Onboarding** again to restart your setup."
+            )
+          ],
+          components: []
+        });
+      }
+
+      session.social =
+        interaction.values[0] ===
+        "skip"
+          ? null
+          : interaction.values[0];
+
+      await saveOnboardingSession(
+        interaction.user.id,
+        session
+      );
+
+      return interaction.editReply({
+        embeds: [
+          onboardingSummaryEmbed(
+            session
+          )
+        ],
+        components: [
+          finishButton(
+            session.language
+          )
+        ]
+      });
+    }
+
+    if (
+      interaction.isButton() &&
+      interaction.customId === "onboard_finish"
+    ) {
+      await interaction.deferUpdate();
+
+      const session =
+        await getOnboardingSession(
+          interaction.user.id
+        );
+
+      if (!session?.language) {
+        return interaction.editReply({
+          embeds: [
+            brandEmbed(
+              "⚠️ Onboarding Needs to Restart",
+              "Vestra couldn’t recover your language selection. Press **Start Onboarding** again — your progress is now saved in the database during future restarts."
+            )
+          ],
+          components: []
+        });
+      }
+
+      const member =
+        await interaction.guild.members.fetch(
+          interaction.user.id
+        );
+
+      const rolesToRemove =
+        [...RESETTABLE_ROLES]
+          .filter(
+            roleId =>
+              !PROTECTED_ROLES.has(
+                roleId
+              ) &&
+              member.roles.cache.has(
+                roleId
+              )
+          );
+
+      if (
+        rolesToRemove.length
+      ) {
+        await member.roles.remove(
+          rolesToRemove
+        );
+      }
+
+      const rolesToAdd =
+        new Set([
+          ASHEN_WARRIORS,
+          LANGUAGES[
+            session.language
+          ].role,
+          ONBOARDING_COMPLETE
+        ]);
+
+      for (
+        const key of
+        session.reminders || []
+      ) {
+        if (REMINDERS[key]) {
+          rolesToAdd.add(
+            REMINDERS[key].role
+          );
+
+          continue;
+        }
+
+        if (
+          key.startsWith(
+            "tournament:"
+          )
+        ) {
+          const tournamentKey =
+            key.split(":")[1];
+
+          if (
+            TOURNAMENTS[
+              tournamentKey
+            ]
+          ) {
+            rolesToAdd.add(
+              TOURNAMENTS[
+                tournamentKey
+              ].role
+            );
+          }
+        }
+      }
+
+      if (session.playstyle) {
+        rolesToAdd.add(
+          PLAYSTYLE[
+            session.playstyle
+          ].role
+        );
+      }
+
+      if (session.social) {
+        rolesToAdd.add(
+          SOCIAL[
+            session.social
+          ].role
+        );
+      }
+
+      await member.roles.add(
+        [...rolesToAdd]
+      );
+
+      await savePrimaryLanguage(
+        member.id,
+        session.language
+      );
+
+      const intro =
+        await interaction.guild.channels.fetch(
+          CHANNELS.INTRODUCTIONS
+        ).catch(() => null);
+
+      if (
+        intro?.isTextBased()
+      ) {
+        await intro.send({
+          content:
+            `${member}`,
+
+          embeds: [
+            welcomeCard(
+              member,
+
+              LANGUAGES[
+                session.language
+              ].name,
+
+              session.playstyle
+                ? PLAYSTYLE[
+                    session.playstyle
+                  ].name
+                : "Not specified",
+
+              session.social
+                ? SOCIAL[
+                    session.social
+                  ].name
+                : "Not specified"
+            )
+          ],
+
+          allowedMentions: {
+            parse: [],
+            users: [
+              member.id
+            ]
+          }
+        });
+      }
+
+      await deleteOnboardingSession(
+        interaction.user.id
+      );
+
+      await setupGuildMembersPanel()
+        .catch(() => {});
+
+      return interaction.editReply({
+        embeds: [
+          brandEmbed(
+            "✅ Welcome to Ashen Warriors!",
+            `${TEXT[session.language].done}
+
+Your roles and Vestra preferences are saved. Head into the server, say hi, and make yourself at home. 🖤`
+          ).setFooter({
+            text:
+              "Vestra • Onboarding Complete"
+          })
+        ],
+        components: []
+      });
+    }
+
+    // -------------------------------------------------
+    // SETTINGS HOME
+    // -------------------------------------------------
+    if (interaction.isButton() && interaction.customId === "settings_open") {
+      const payload = { embeds: [settingsHomeEmbed()], components: settingsHomeComponents() };
+      if (interaction.message?.flags?.has?.(MessageFlags.Ephemeral)) return interaction.update(payload);
+      return interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+    }
+
+    if (interaction.isButton() && interaction.customId === "settings_back") {
+      return interaction.update({ embeds: [settingsHomeEmbed()], components: settingsHomeComponents() });
+    }
+
+    if (interaction.isButton() && interaction.customId === "settings_card") {
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      const embed = await memberCardEmbed(member);
+      if (interaction.message?.flags?.has?.(MessageFlags.Ephemeral)) {
+        return interaction.update({ embeds: [embed], components: [backButtonRow()] });
+      }
+      return interaction.reply({ embeds: [embed], components: [backButtonRow()], flags: MessageFlags.Ephemeral });
+    }
+
+    if (interaction.isButton() && interaction.customId === "settings_languages") {
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      const selected = LANGUAGE_KEYS.filter(key => member.roles.cache.has(LANGUAGE_CHANNELS[key].role));
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId("settings_languages_select")
+        .setPlaceholder("Choose every language channel you want")
+        .setMinValues(1)
+        .setMaxValues(LANGUAGE_KEYS.length)
+        .addOptions(LANGUAGE_KEYS.map(key => ({
+          label: LANGUAGE_CHANNELS[key].name,
+          value: key,
+          emoji: LANGUAGE_CHANNELS[key].emoji,
+          default: selected.includes(key)
+        })));
+      return interaction.update({
+        embeds: [new EmbedBuilder().setTitle("🌎 Language Access").setDescription("Choose every General language channel you want to see.")],
+        components: [new ActionRowBuilder().addComponents(menu), backButtonRow()]
+      });
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId === "settings_languages_select") {
+      await interaction.deferUpdate();
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      const selected = new Set(interaction.values);
+      for (const key of LANGUAGE_KEYS) {
+        const role = LANGUAGE_CHANNELS[key].role;
+        if (selected.has(key) && !member.roles.cache.has(role)) await member.roles.add(role).catch(() => {});
+        if (!selected.has(key) && member.roles.cache.has(role)) await member.roles.remove(role).catch(() => {});
+      }
+      const primary = await inferPrimaryLanguage(member);
+      if (!selected.has(primary)) await savePrimaryLanguage(member.id, interaction.values[0]);
+      return interaction.editReply({
+        embeds: [brandEmbed("✅ Language Access Updated", "Your language channel access has been saved.")],
+        components: [backButtonRow()]
+      });
+    }
+
+    if (interaction.isButton() && interaction.customId === "settings_notify") {
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      const current = await inferPrimaryLanguage(member);
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId("settings_notify_select")
+        .setPlaceholder("Choose one notification language")
+        .addOptions(LANGUAGE_KEYS.map(key => ({
+          label: LANGUAGE_CHANNELS[key].name,
+          value: key,
+          emoji: LANGUAGE_CHANNELS[key].emoji,
+          default: current === key
+        })));
+      return interaction.update({
+        embeds: [new EmbedBuilder().setTitle("🔔 Primary Notification Language").setDescription("Vestra sends your event pings **once**, in this language's General channel.")],
+        components: [new ActionRowBuilder().addComponents(menu), backButtonRow()]
+      });
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId === "settings_notify_select") {
+      await interaction.deferUpdate();
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      const key = interaction.values[0];
+      if (!member.roles.cache.has(LANGUAGE_CHANNELS[key].role)) await member.roles.add(LANGUAGE_CHANNELS[key].role);
+      await savePrimaryLanguage(member.id, key);
+      return interaction.editReply({
+        embeds: [brandEmbed(
+          "✅ Notification Language Updated",
+          `${LANGUAGE_CHANNELS[key].emoji} Vestra will notify you in **${LANGUAGE_CHANNELS[key].name}**.`
+        )],
+        components: [backButtonRow()]
+      });
+    }
+
+    if (interaction.isButton() && interaction.customId === "settings_reminders") {
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      const selected = Object.entries(REMINDERS).filter(([, item]) => member.roles.cache.has(item.role)).map(([key]) => key);
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId("settings_reminders_select")
+        .setPlaceholder("Choose game alerts")
+        .setMinValues(1)
+        .setMaxValues(8)
+        .addOptions(
+          ...Object.entries(REMINDERS).map(([key, item]) => ({ label: item.name, value: key, emoji: item.emoji, default: selected.includes(key) })),
+          { label: "No game pings", value: "none", emoji: "🔕", default: selected.length === 0 }
+        );
+      return interaction.update({
+        embeds: [new EmbedBuilder().setTitle("⏰ Game Reminder Pings").setDescription("Choose the events you want Vestra to notify you about.")],
+        components: [new ActionRowBuilder().addComponents(menu), backButtonRow()]
+      });
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId === "settings_reminders_select") {
+      await interaction.deferUpdate();
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      const selected = interaction.values.includes("none") ? new Set() : new Set(interaction.values);
+      for (const [key, item] of Object.entries(REMINDERS)) {
+        if (selected.has(key) && !member.roles.cache.has(item.role)) await member.roles.add(item.role).catch(() => {});
+        if (!selected.has(key) && member.roles.cache.has(item.role)) await member.roles.remove(item.role).catch(() => {});
+      }
+      return interaction.editReply({
+        embeds: [brandEmbed("✅ Game Pings Updated", "Your game and guild reminder choices have been saved.")],
+        components: [backButtonRow()]
+      });
+    }
+
+    if (interaction.isButton() && interaction.customId === "settings_tournaments") {
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      const selected = Object.entries(TOURNAMENTS).filter(([, item]) => member.roles.cache.has(item.role)).map(([key]) => key);
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId("settings_tournaments_select")
+        .setPlaceholder("Choose tournament alerts")
+        .setMinValues(1)
+        .setMaxValues(3)
+        .addOptions(
+          { label: "Server Tournament", value: "sever", emoji: "⚔️", default: selected.includes("sever") },
+          { label: "Nexus Tournament", value: "nexus", emoji: "🌀", default: selected.includes("nexus") },
+          { label: "No tournament pings", value: "none", emoji: "🔕", default: selected.length === 0 }
+        );
+      return interaction.update({
+        embeds: [new EmbedBuilder().setTitle("🏆 Tournament Pings").setDescription("Opt in to Server Tournament, Nexus Tournament, both, or neither.")],
+        components: [new ActionRowBuilder().addComponents(menu), backButtonRow()]
+      });
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId === "settings_tournaments_select") {
+      await interaction.deferUpdate();
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      const selected = interaction.values.includes("none") ? new Set() : new Set(interaction.values);
+      for (const [key, item] of Object.entries(TOURNAMENTS)) {
+        if (selected.has(key) && !member.roles.cache.has(item.role)) await member.roles.add(item.role).catch(() => {});
+        if (!selected.has(key) && member.roles.cache.has(item.role)) await member.roles.remove(item.role).catch(() => {});
+      }
+      return interaction.editReply({
+        embeds: [brandEmbed("✅ Tournament Pings Updated", "Your Server Tournament and Nexus Tournament alert choices have been saved.")],
+        components: [backButtonRow()]
+      });
+    }
+
+    if (interaction.isButton() && interaction.customId === "settings_playstyle") {
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId("settings_playstyle_select")
+        .setPlaceholder("Choose your playstyle")
+        .addOptions(
+          ...Object.entries(PLAYSTYLE).map(([key, item]) => ({ label: item.name, value: key, emoji: item.emoji })),
+          { label: "None", value: "none", emoji: "⏭️" }
+        );
+      return interaction.update({ embeds: [new EmbedBuilder().setTitle("🎮 Playstyle")], components: [new ActionRowBuilder().addComponents(menu), backButtonRow()] });
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId === "settings_playstyle_select") {
+      await interaction.deferUpdate();
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      const selected = interaction.values[0] === "none" ? null : interaction.values[0];
+      await updateSingleChoiceRole(member, PLAYSTYLE, selected);
+      return interaction.editReply({
+        embeds: [brandEmbed("✅ Playstyle Updated", "Your playstyle has been saved.")],
+        components: [backButtonRow()]
+      });
+    }
+
+    if (interaction.isButton() && interaction.customId === "settings_social") {
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId("settings_social_select")
+        .setPlaceholder("Choose your social preference")
+        .addOptions(
+          ...Object.entries(SOCIAL).map(([key, item]) => ({ label: item.name, value: key, emoji: item.emoji })),
+          { label: "None", value: "none", emoji: "⏭️" }
+        );
+      return interaction.update({ embeds: [new EmbedBuilder().setTitle("💬 Social Preference")], components: [new ActionRowBuilder().addComponents(menu), backButtonRow()] });
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId === "settings_social_select") {
+      await interaction.deferUpdate();
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      const selected = interaction.values[0] === "none" ? null : interaction.values[0];
+      await updateSingleChoiceRole(member, SOCIAL, selected);
+      return interaction.editReply({
+        embeds: [brandEmbed("✅ Social Preference Updated", "Your social preference has been saved.")],
+        components: [backButtonRow()]
+      });
+    }
+
+    // -------------------------------------------------
+    // TOURNAMENT STAFF CONTROLS
+    // -------------------------------------------------
+    if (interaction.isButton() && interaction.customId === "tournament_next") {
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      if (!isStaff(member)) return interaction.reply({ content: "❌ Only Ashen staff can advance tournament rounds.", flags: MessageFlags.Ephemeral });
+      const state = await getActiveTournamentState();
+      if (!state || state.phase !== "battle") return interaction.reply({ content: "❌ There isn't a battle waiting for the next vote right now.", flags: MessageFlags.Ephemeral });
+      const tournament = TOURNAMENTS[state.tournament];
+      if (state.round >= tournament.rounds) return interaction.reply({ content: "Round 4 is already complete. Use Finish Tournament after the final battle.", flags: MessageFlags.Ephemeral });
+      await startTournamentVote(state.tournament, state.round + 1, true);
+      return interaction.reply({ content: `✅ Round ${state.round + 1} voting opened.`, flags: MessageFlags.Ephemeral });
+    }
+
+    if (interaction.isButton() && interaction.customId === "tournament_finish") {
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      if (!isStaff(member)) return interaction.reply({ content: "❌ Only Ashen staff can finish Tournament Mode.", flags: MessageFlags.Ephemeral });
+      const state = await getActiveTournamentState();
+      if (!state) return interaction.reply({ content: "❌ No active tournament.", flags: MessageFlags.Ephemeral });
+      await finishTournament(state.tournament);
+      return interaction.reply({ content: "🏁 Tournament Mode finished. The Live Event Board is back to normal.", flags: MessageFlags.Ephemeral });
+    }
+
+  } catch (error) {
+    console.error("❌ Interaction error:", error);
+    try {
+      if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: "❌ Something went wrong. Please try again.", flags: MessageFlags.Ephemeral });
+      } else if (interaction.isRepliable() && interaction.deferred) {
+        await interaction.editReply("❌ Something went wrong. Please try again.");
+      }
+    } catch {}
   }
-);
+});
 
 // =====================================================
 // READY
 // =====================================================
 
-client.once(
-  Events.ClientReady,
-  async readyClient => {
-    console.log(
-      `✅ ${BOT_NAME} online as ${readyClient.user.tag}`
-    );
+client.once(Events.ClientReady, async readyClient => {
+  console.log(`✅ ${BOT_NAME} online as ${readyClient.user.tag}`);
 
-    try {
-      await initDatabase();
-
-      await cleanupLegacySocialCompanions();
-    } catch (error) {
-      console.error(
-        "❌ DATABASE FAILED TO INITIALIZE:",
-        error
-      );
-
-      return;
-    }
-
-    const setupTasks = [
-      [
-        "Start Here",
-        setupStartHere
-      ],
-
-      [
-        "Onboarding",
-        setupOnboardingPanel
-      ],
-
-      [
-        "Preferences",
-        setupPreferences
-      ],
-
-      [
-        "Help Center",
-        setupHelpCenter
-      ],
-
-      [
-        "Live Event Board",
-        setupEventBoard
-      ]
-    ];
-
-    for (
-      const [
-        label,
-        fn
-      ] of setupTasks
-    ) {
-      try {
-        await fn();
-
-        console.log(
-          `✅ ${label} ready.`
-        );
-      } catch (error) {
-        console.error(
-          `❌ ${label} setup error:`,
-          error
-        );
-      }
-    }
-
-    try {
-      await runPermissionChecks();
-    } catch (error) {
-      console.error(
-        "❌ Permission audit error:",
-        error
-      );
-    }
-
-    startScheduler();
-
-    console.log(
-      "✅ Google Cloud Translation active."
-    );
-
-    console.log(
-      "✅ Persistent edit/delete/reaction sync active."
-    );
-
-    console.log(
-      "✅ Synced reply links active across translated channels."
-    );
-
-    console.log(
-      "✅ Social 🌐 reaction translations active."
-    );
-
-    console.log(
-      "✅ Primary-language notification delivery active."
-    );
-
-    console.log(
-      "✅ Server + Nexus Tournament Mode active."
-    );
-
-    console.log(
-      "✅ Community Highlights active."
-    );
+  try {
+    await initDatabase();
+    await cleanupLegacySocialCompanions();
+  } catch (error) {
+    console.error("❌ DATABASE FAILED TO INITIALIZE:", error);
+    return;
   }
-);
+
+  await cleanupLegacyWelcomePanels().catch(error => {
+    console.error("⚠️ Legacy panel cleanup:", error.message);
+  });
+
+  const setupTasks = [
+    ["Start Here", setupStartHere],
+    ["Rules Guide", setupRulesPanel],
+    ["Onboarding", setupOnboardingPanel],
+    ["Help Center", setupHelpCenter],
+    ["Preferences", setupPreferences],
+    ["Introductions", setupIntroductionPanel],
+    ["Staff Requests", setupStaffRequestsPanel],
+    ["Guild Members", setupGuildMembersPanel],
+    ["Guild Ping Log", setupGuildPingsPanel],
+    ["Live Event Board", setupEventBoard]
+  ];
+
+  for (const [label, fn] of setupTasks) {
+    try {
+      await fn();
+      console.log(`✅ ${label} ready.`);
+    } catch (error) {
+      console.error(`❌ ${label} setup error:`, error);
+    }
+  }
+
+  try {
+    await runPermissionChecks();
+  } catch (error) {
+    console.error("❌ Permission audit error:", error);
+  }
+
+  startScheduler();
+
+  console.log("✅ Google Cloud Translation active.");
+  console.log("✅ Persistent edit/delete/reaction sync active.");
+  console.log("✅ Synced reply links active across translated channels.");
+  console.log("✅ 🌐 reaction translations active across Social, Important, Welcome, SxS Media, and SxS Resources.");
+  console.log("✅ Primary-language notification delivery active.");
+  console.log("✅ Server + Nexus Tournament Mode active with manual voting rounds.");
+  console.log("✅ Community Highlights active.");
+});
 
 // =====================================================
 // LOGIN
 // =====================================================
 
-client.login(
-  process.env.DISCORD_BOT
-);
+client.login(process.env.DISCORD_BOT);
