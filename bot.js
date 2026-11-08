@@ -1861,6 +1861,9 @@ function isReactionTranslateChannel(channel) {
     SOCIAL_CHANNELS.has(channel.id) ||
     channel.parentId === SOCIAL_CATEGORY_ID ||
     channel.parentId === IMPORTANT_CATEGORY_ID ||
+    channel.id === CHANNELS.REMINDERS ||
+    channel.id === CHANNELS.HIGHLIGHTS ||
+    channel.id === CHANNELS.EVENT_BOARD ||
     channel.parentId === WELCOME_CATEGORY_ID ||
     EXTRA_REACTION_TRANSLATION_CHANNELS.has(channel.id)
   );
@@ -3407,10 +3410,20 @@ async function applyAshenSidebarTheme(guildOverride = null) {
     { optional: true }
   );
 
-  const sxsEventBoard = findTextByNames(
-    "sxs-event-board",
-    "event-board"
-  );
+  const sxsEventBoard =
+    guild.channels.cache.find(
+      ch =>
+        ch.isTextBased?.() &&
+        ch.name.includes("sxs-event-board")
+    ) ||
+    guild.channels.cache.find(
+      ch =>
+        ch.isTextBased?.() &&
+        ch.parentId === sxsCategory?.id &&
+        ch.name.includes("event-board") &&
+        !ch.name.includes("live-event-board")
+    ) ||
+    null;
 
   await renameChannel(
     sxsEventBoard,
