@@ -1399,7 +1399,8 @@ function bestAshenThreadTitle(message, thread) {
 
   return message
     ? safeThreadTitle(message)
-    : cleanAshenThreadTitle("Showcase — " + (thread.ownerId || "Ashen"));
+    : cleanAshenThreadTitle("Showcase — " +
+        (thread.guild?.members?.cache?.get(thread.ownerId)?.displayName || "Ashen"));
 }
 
 // Optional visual titles: enable Google Cloud Vision API and configure
@@ -1792,6 +1793,132 @@ async function restyleAshenShowcaseHistory(guild) {
   }
   if (!failed) await dbSetState(key, { completed: true, updated });
   console.log("Ashen showcase restyle: " + updated + " refreshed, " + failed + " failed");
+}
+
+// One-time complete repair of existing showcase thread titles. Unlike prior
+// migrations, this also finds threads archived out of the guild channel cache.
+// It intentionally does NOT call Vision for old posts, preserving the quota.
+async function rebuildAllAshenThreadTitles(guild) {
+  const key = "ashen_all_thread_titles_clean_v2_20261108";
+  if ((await dbGetState(key))?.completed) return;
+  const channel = getAshenMembersChannel(guild);
+  if (!channel?.threads) {
+    console.warn("Ashen titles: showcase channel unavailable.");
+    return;
+  }
+
+  const sources = new Map();
+  const allThreads = new Map();
+  const addThread = thread => {
+    if (thread?.isThread?.() && thread.parentId === channel.id)
+      allThreads.set(thread.id, thread);
+  };
+  let before;
+  let rootPages = 0;
+  do {
+    const page = await channel.messages.fetch({
+      limit: 100,
+      ...(before ? { before } : {})
+    });
+    if (!page.size) break;
+
+    for (const message of page.values()) {
+      if (message.hasThread) sources.set(message.id, message);
+    }
+    before = page.last()?.id;
+    rootPages++;
+    if (!before || page.size < 100) break;
+  } while (rootPages < 10000);
+
+  const active = await channel.threads.fetchActive();
+  for (const thread of active.threads.values()) addThread(thread);
+
+  // Public archived threads are ordered newest to oldest. Discord's "before"
+  // cursor is the archive timestamp (not a message ID).
+  let cursor;
+  let archivePages = 0;
+  let archiveHasMore = false;
+  do {
+    const result = await channel.threads.fetchArchived({
+      type: "public",
+      limit: 100,
+      ...(cursor ? { before: cursor } : {})
+    });
+    for (const thread of result.threads.values()) addThread(thread);
+    archiveHasMore = result.hasMore;
+    if (!archiveHasMore) break;
+
+    const timestamps = [...result.threads.values()]
+      .map(thread => thread.archiveTimestamp)
+      .filter(Number.isFinite);
+    if (!timestamps.length)
+      throw new Error("Archived Ashen threads could not provide pagination timestamps.");
+    const oldest = Math.min(...timestamps);
+    const next = new Date(oldest - 1);
+    if (cursor && next >= cursor) throw new Error("Archived thread cursor did not advance.");
+    cursor = next;
+    archivePages++;
+  } while (archivePages < 1000);
+
+  if (archiveHasMore) throw new Error("Archived Ashen thread scan exceeded safety limit.");
+  if (rootPages >= 10000) throw new Error("Ashen post scan exceeded safety limit.");
+
+  // A thread can exist on a starter message even when an API's thread list
+  // missed it. Resolve these directly before declaring the scan complete.
+  for (const sourceId of sources.keys()) {
+    if (allThreads.has(sourceId)) continue;
+    const thread = await channel.threads.fetch(sourceId).catch(() => null);
+    addThread(thread);
+  }
+
+  let renamed = 0;
+  let unchanged = 0;
+  let failed = 0;
+  for (const thread of allThreads.values()) {
+    try {
+      let source = sources.get(thread.id);
+      if (!source) {
+        source = await channel.messages.fetch(thread.id).catch(() => null);
+      }
+      const desired = cleanAshenThreadTitle(bestAshenThreadTitle(source, thread));
+      if (!desired) {
+        failed++;
+        console.warn("Ashen titles: no safe name for thread " + thread.id);
+        continue;
+      }
+      if (thread.name === desired) {
+        unchanged++;
+        continue;
+      }
+
+      const wasArchived = thread.archived === true;
+      if (wasArchived) await thread.setArchived(false, "Repair Ashen thread name");
+      try {
+        await thread.setName(desired, "Remove emojis and misleading labels from Ashen threads");
+        renamed++;
+      } finally {
+        if (wasArchived && !thread.archived)
+          await thread.setArchived(true, "Restore Ashen thread archive state")
+            .catch(error => console.warn("Could not rearchive Ashen thread " +
+              thread.id + ": " + error.message));
+      }
+    } catch (error) {
+      failed++;
+      console.error("Ashen thread title repair " + thread.id + ": " + error.message);
+    }
+  }
+
+  if (!failed) {
+    await dbSetState(key, {
+      completed: true,
+      renamed,
+      unchanged,
+      checked: allThreads.size
+    });
+  }
+  console.log("Ashen thread title repair: " + renamed + " renamed, " +
+    unchanged + " already correct, " + failed + " failed; " +
+    allThreads.size + " total threads.");
 }
 
 async function ensureAshenMembersDiscussion(message) {
@@ -5123,7 +5250,7 @@ client.once(Events.ClientReady, async readyClient => {
   void (async () => {
     await backfillLegacyAshenMembersPosts(ashenGuild);
     await restyleAshenShowcaseHistory(ashenGuild);
-    await renameLegacyAshenImageThreads(ashenGuild);
+    await rebuildAllAshenThreadTitles(ashenGuild);
   })().catch(error => {
     console.error("❌ Ashen Members historical showcase update:", error);
   });
