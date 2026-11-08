@@ -12,7 +12,8 @@ import {
   TextInputStyle,
   MessageFlags,
   EmbedBuilder,
-  PermissionFlagsBits
+  PermissionFlagsBits,
+  ChannelType
 } from "discord.js";
 import pg from "pg";
 import { createHash } from "node:crypto";
@@ -2912,6 +2913,7 @@ async function applyAshenSidebarTheme(guildOverride = null) {
     guildName: guild?.name || null,
     guildId: guild?.id || null,
     renamed: [],
+    created: [],
     skipped: [],
     failed: []
   };
@@ -2949,6 +2951,76 @@ async function applyAshenSidebarTheme(guildOverride = null) {
       report.failed.push(detail);
       console.error("⚠️ Theme rename failed:", detail);
     }
+  };
+
+  const ensureDecorativeChannel = async (parent, name, afterChannel = null) => {
+    if (!parent) {
+      report.failed.push(`Missing parent category for decorative channel ${name}`);
+      return null;
+    }
+
+    let channel = guild.channels.cache.find(
+      ch => ch.parentId === parent.id && ch.name === name
+    ) || null;
+
+    try {
+      if (!channel) {
+        channel = await guild.channels.create({
+          name,
+          type: ChannelType.GuildText,
+          parent: parent.id,
+          permissionOverwrites: [
+            {
+              id: guild.roles.everyone.id,
+              deny: [
+                PermissionFlagsBits.SendMessages,
+                PermissionFlagsBits.AddReactions,
+                PermissionFlagsBits.CreatePublicThreads,
+                PermissionFlagsBits.CreatePrivateThreads,
+                PermissionFlagsBits.SendMessagesInThreads
+              ]
+            }
+          ],
+          reason: "Ashen black-and-white decorative sidebar framing"
+        });
+
+        report.created.push(name);
+        console.log(`✦ Created decorative channel ${name}`);
+      } else {
+        report.skipped.push(name);
+      }
+
+      if (afterChannel) {
+        const anchor =
+          typeof afterChannel === "string"
+            ? guild.channels.cache.get(afterChannel)
+            : afterChannel;
+
+        if (anchor?.parentId === parent.id) {
+          await channel.setPosition(anchor.position + 1).catch(() => {});
+        }
+      }
+
+      return channel;
+    } catch (error) {
+      const detail = `Decorative ${name}: ${error.message}`;
+      report.failed.push(detail);
+      console.error("⚠️ Decorative channel failed:", detail);
+      return null;
+    }
+  };
+
+  const moveToCategoryBottom = async (channel, parent) => {
+    if (!channel || !parent) return;
+
+    const siblings = guild.channels.cache
+      .filter(ch => ch.parentId === parent.id && ch.id !== channel.id);
+
+    const bottom = siblings.size
+      ? Math.max(...siblings.map(ch => ch.position)) + 1
+      : 0;
+
+    await channel.setPosition(bottom).catch(() => {});
   };
 
   const byId = id => guild.channels.cache.get(id) || null;
@@ -3049,8 +3121,74 @@ async function applyAshenSidebarTheme(guildOverride = null) {
   await renameChildByCurrentName(voiceCategory, ["boss grinds", "boss-grinds"], "♱・Boss Grinds");
   await renameChildByCurrentName(voiceCategory, ["admins"], "◇・Admins");
 
+  // -------------------------------------------------
+  // DECORATIVE SPACERS + CATEGORY CLOSERS
+  // -------------------------------------------------
+
+  const welcomeSpacer = await ensureDecorativeChannel(
+    welcomeCategory,
+    "━━━━ 𖤐 ━━━━",
+    CHANNELS.INTRODUCTIONS
+  );
+  const welcomeCloser = await ensureDecorativeChannel(
+    welcomeCategory,
+    "╰━━━ 🖤 ━━━╯"
+  );
+  await moveToCategoryBottom(welcomeCloser, welcomeCategory);
+
+  const infoSpacer = await ensureDecorativeChannel(
+    infoCategory,
+    "━━━━ ✦ ━━━━",
+    guild.channels.cache.find(
+      ch => ch.parentId === infoCategory?.id && ch.name.includes("sxs-announcements")
+    ) || null
+  );
+  const infoCloser = await ensureDecorativeChannel(
+    infoCategory,
+    "╰━━━ 𖤐 ━━━╯"
+  );
+  await moveToCategoryBottom(infoCloser, infoCategory);
+
+  const japaneseGeneral = byId(LANGUAGE_CHANNELS.japanese.channel);
+  const sxsSpacer = await ensureDecorativeChannel(
+    sxsCategory,
+    "━━━━ ⚔ ━━━━",
+    japaneseGeneral
+  );
+  const sxsCloser = await ensureDecorativeChannel(
+    sxsCategory,
+    "╰━━━ ✦ ━━━╯"
+  );
+  await moveToCategoryBottom(sxsCloser, sxsCategory);
+
+  const socialGeneral = byId("1542252582469247016");
+  const socialSpacer = await ensureDecorativeChannel(
+    socialCategory,
+    "━━━━ ♡ ━━━━",
+    socialGeneral
+  );
+  const socialCloser = await ensureDecorativeChannel(
+    socialCategory,
+    "╰━━━ ☾ ━━━╯"
+  );
+  await moveToCategoryBottom(socialCloser, socialCategory);
+
+  const voiceGaming = guild.channels.cache.find(
+    ch => ch.parentId === voiceCategory?.id && ch.name.includes("Gaming")
+  ) || null;
+  const voiceSpacer = await ensureDecorativeChannel(
+    voiceCategory,
+    "━━━━ 𖤐 ━━━━",
+    voiceGaming
+  );
+  const voiceCloser = await ensureDecorativeChannel(
+    voiceCategory,
+    "╰━━━ ♡ ━━━╯"
+  );
+  await moveToCategoryBottom(voiceCloser, voiceCategory);
+
   console.log(
-    `🖤 Ashen theme report: ${report.renamed.length} renamed, ${report.skipped.length} already styled, ${report.failed.length} failed.`
+    `🖤 Ashen theme report: ${report.renamed.length} renamed, ${report.created.length} decorations created, ${report.skipped.length} already styled, ${report.failed.length} failed.`
   );
 
   return report;
@@ -3367,7 +3505,12 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const renamed = report.renamed.length
         ? report.renamed.slice(0, 12).map(x => `✅ ${x}`).join("\n")
-        : "Nothing changed.";
+        : "No channel names needed changing.";
+
+      const created = report.created.length
+        ? "\n\n**New decorative pieces:**\n" +
+          report.created.map(x => `✦ ${x}`).join("\n")
+        : "";
 
       const failed = report.failed.length
         ? "\n\n**Couldn’t change:**\n" + report.failed.slice(0, 8).map(x => `❌ ${x}`).join("\n")
@@ -3379,9 +3522,11 @@ client.on(Events.InteractionCreate, async interaction => {
           `**Server:** ${report.guildName || "Unknown"}\n` +
           `**Server ID:** ${report.guildId || "Unknown"}\n` +
           `**Renamed:** ${report.renamed.length}\n` +
+          `**Decorations created:** ${report.created.length}\n` +
           `**Already styled:** ${report.skipped.length}\n` +
           `**Failed:** ${report.failed.length}\n\n` +
           renamed +
+          created +
           failed
       });
     }
