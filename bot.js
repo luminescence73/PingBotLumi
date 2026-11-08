@@ -153,6 +153,12 @@ async function initDatabase() {
       sent_at TIMESTAMPTZ DEFAULT NOW()
     )`,
 
+    `CREATE TABLE IF NOT EXISTS vision_monthly_usage (
+      month TEXT PRIMARY KEY,
+      requests_reserved INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+
     `CREATE TABLE IF NOT EXISTS bot_state (
       key TEXT PRIMARY KEY,
       value JSONB NOT NULL,
@@ -1477,6 +1483,32 @@ function safeThreadTitle(message) {
 // Optional visual titles: enable Google Cloud Vision API and configure
 // GOOGLE_VISION_API_KEY in Railway. Until configured, use caption/file titles.
 // Thread creation never waits for this external image-analysis request.
+// Label Detection: 1000 free units per calendar month. This is a bot-only
+// usage cap, not a substitute for checking Google Cloud project billing.
+// Reserve BEFORE each Google call. Failed/time-out calls are counted
+// conservatively because they may have reached Google.
+// Atomic DB counter survives restarts and concurrent posts; DB errors block Vision.
+const VISION_MONTHLY_REQUEST_CAP = 1000;
+
+async function reserveVisionRequest() {
+  const month = new Date().toISOString().slice(0, 7); // UTC calendar month
+  const result = await pool.query(
+    `INSERT INTO vision_monthly_usage (month, requests_reserved, updated_at)
+     VALUES ($1, 1, NOW())
+     ON CONFLICT (month) DO UPDATE
+       SET requests_reserved = vision_monthly_usage.requests_reserved + 1,
+           updated_at = NOW()
+     WHERE vision_monthly_usage.requests_reserved < $2
+     RETURNING requests_reserved`,
+    [month, VISION_MONTHLY_REQUEST_CAP]
+  );
+  if (!result.rowCount) {
+    console.log("🖼️ Vision free-tier monthly cap reached (" + month + "). Using caption/filename title.");
+    return false;
+  }
+  return true;
+}
+
 async function visualAshenThreadTitle(message) {
   const key = process.env.GOOGLE_VISION_API_KEY;
   if (!key) return null;
@@ -1494,6 +1526,10 @@ async function visualAshenThreadTitle(message) {
   if (!imageResponse.ok) throw new Error("Image fetch HTTP " + imageResponse.status);
   const bytes = await imageResponse.arrayBuffer();
   if (bytes.byteLength > 8_000_000) return null;
+
+  // If the counter is unavailable or exhausted, skip paid analysis.
+  // A reservation counts even if Google later errors or the call times out.
+  if (!await reserveVisionRequest()) return null;
 
   const result = await fetch("https://vision.googleapis.com/v1/images:annotate", {
     method: "POST",
