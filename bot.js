@@ -1994,23 +1994,38 @@ async function handleSocialTranslationReaction(reaction, user) {
   }
 
   const requesterName = safeDisplayName(member, user);
+  const deleteAtUnix = Math.floor(
+    (Date.now() + SOCIAL_TRANSLATION_DELETE_MS) / 1000
+  );
 
-  const embed = new EmbedBuilder()
-    .setAuthor({
-      name: safeDisplayName(message.member, message.author),
-      iconURL: message.author?.displayAvatarURL?.({ size: 128 }) || undefined
-    })
-    .setTitle(`${target.emoji} Translation → ${target.name}`)
-    .setDescription(limitText(translated, 3900))
-    .setFooter({
-      text: `Requested by ${requesterName} • Auto-deletes in 30s • Vestra`
+  const makeTranslationEmbed = temporary => {
+    const translationEmbed = new EmbedBuilder()
+      .setAuthor({
+        name: safeDisplayName(message.member, message.author),
+        iconURL: message.author?.displayAvatarURL?.({ size: 128 }) || undefined
+      })
+      .setTitle(`${target.emoji} Translation → ${target.name}`)
+      .setDescription(limitText(translated, 3900));
+
+    if (temporary) {
+      translationEmbed.addFields({
+        name: "⏳ Translation disappears",
+        value: `<t:${deleteAtUnix}:R> • <t:${deleteAtUnix}:T>`
+      });
+    }
+
+    return translationEmbed.setFooter({
+      text: temporary
+        ? `Requested by ${requesterName} • Vestra`
+        : `Requested by ${requesterName} • Vestra • DM fallback`
     });
+  };
 
   let translatedReply = null;
 
   if (canSendHere) {
     translatedReply = await message.reply({
-      embeds: [embed],
+      embeds: [makeTranslationEmbed(true)],
       allowedMentions: { parse: [], repliedUser: false }
     }).catch(error => {
       console.error(`❌ Reaction translation reply in #${message.channel.name}:`, error.message);
@@ -2023,7 +2038,7 @@ async function handleSocialTranslationReaction(reaction, user) {
 
     await user.send({
       content: `🌐 **Translation from #${message.channel.name}**\n${message.url}`,
-      embeds: [embed]
+      embeds: [makeTranslationEmbed(false)]
     }).catch(error => {
       console.error("❌ Translation DM fallback:", error.message);
     });
@@ -4555,11 +4570,53 @@ Head into the server, say hi, and make yourself at home. 🖤`,
 });
 
 // =====================================================
+// VESTRA IDENTITY
+// =====================================================
+
+async function enforceVestraIdentity(readyClient) {
+  if (readyClient.user.username !== BOT_NAME) {
+    try {
+      await readyClient.user.setUsername(BOT_NAME);
+      console.log(`✅ Bot username changed to ${BOT_NAME}.`);
+    } catch (error) {
+      console.error(
+        `⚠️ Could not change global bot username to ${BOT_NAME}:`,
+        error.message
+      );
+    }
+  }
+
+  const guild = await resolveAshenGuild().catch(() => null);
+  if (!guild) return;
+
+  const me =
+    guild.members.me ||
+    await guild.members.fetchMe().catch(() => null);
+
+  if (me && me.displayName !== BOT_NAME) {
+    try {
+      await me.setNickname(
+        BOT_NAME,
+        "Use Vestra branding in Ashen Warriors"
+      );
+      console.log(`✅ Ashen bot nickname changed to ${BOT_NAME}.`);
+    } catch (error) {
+      console.error(
+        `⚠️ Could not change Ashen nickname to ${BOT_NAME}:`,
+        error.message
+      );
+    }
+  }
+}
+
+// =====================================================
 // READY
 // =====================================================
 
 client.once(Events.ClientReady, async readyClient => {
   console.log(`✅ ${BOT_NAME} online as ${readyClient.user.tag}`);
+
+  await enforceVestraIdentity(readyClient);
 
   try {
     await initDatabase();
