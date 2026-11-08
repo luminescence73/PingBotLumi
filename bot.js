@@ -2982,18 +2982,24 @@ async function applyAshenSidebarTheme(guildOverride = null) {
     }
   };
 
-  const makeBottomBar = topName => {
-    const width = Math.max(8, Array.from(topName).length - 2);
-    return `╰${"━".repeat(width)}╯`;
+  const makeBottomBar = (topName, symbol) => {
+    const targetLength = Math.max(12, Array.from(topName).length);
+    const center = ` ${symbol} `;
+    const innerWidth = Math.max(8, targetLength - 2);
+    const dashCount = Math.max(4, innerWidth - Array.from(center).length);
+    const left = Math.ceil(dashCount / 2);
+    const right = Math.floor(dashCount / 2);
+
+    return `╰${"━".repeat(left)}${center}${"━".repeat(right)}╯`;
   };
 
-  const ensureDecorativeCategory = async (topCategory, topName) => {
+  const ensureDecorativeCategory = async (topCategory, topName, symbol) => {
     if (!topCategory) {
       report.failed.push(`Missing top category for decorative footer: ${topName}`);
       return null;
     }
 
-    const footerName = makeBottomBar(topName);
+    const footerName = makeBottomBar(topName, symbol);
 
     let footer = guild.channels.cache.find(
       ch => ch.type === ChannelType.GuildCategory && ch.name === footerName
@@ -3134,15 +3140,15 @@ async function applyAshenSidebarTheme(guildOverride = null) {
   await cleanupOldDecorativeTextChannels();
 
   const categoryFrames = [
-    [welcomeCategory, "╭━━ 𖤐 WELCOME TO ASHEN 𖤐 ━━╮"],
-    [infoCategory, "╭━━ ✦ ASHEN INFO ✦ ━━╮"],
-    [sxsCategory, "╭━━ ⚔ SWORD X STAFF ⚔ ━━╮"],
-    [socialCategory, "╭━━ ♡ ASHEN SOCIAL ♡ ━━╮"],
-    [voiceCategory, "╭━━ 𖤐 ASHEN VOICE 𖤐 ━━╮"]
+    [welcomeCategory, "╭━━ 𖤐 WELCOME TO ASHEN 𖤐 ━━╮", "🖤"],
+    [infoCategory, "╭━━ ✦ ASHEN INFO ✦ ━━╮", "𖤐"],
+    [sxsCategory, "╭━━ ⚔ SWORD X STAFF ⚔ ━━╮", "✦"],
+    [socialCategory, "╭━━ ♡ ASHEN SOCIAL ♡ ━━╮", "☾"],
+    [voiceCategory, "╭━━ 𖤐 ASHEN VOICE 𖤐 ━━╮", "♡"]
   ];
 
-  for (const [category, topName] of categoryFrames) {
-    await ensureDecorativeCategory(category, topName);
+  for (const [category, topName, symbol] of categoryFrames) {
+    await ensureDecorativeCategory(category, topName, symbol);
   }
 
   console.log(
