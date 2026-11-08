@@ -489,6 +489,34 @@ function chunks(array, size) {
 }
 
 function getGuild() {
+  const byKnownChannel =
+    client.channels.cache.get(CHANNELS.START_HERE)?.guild ||
+    client.channels.cache.get(WELCOME_CATEGORY_ID)?.guild;
+
+  return byKnownChannel || client.guilds.cache.first() || null;
+}
+
+async function resolveAshenGuild(guildOverride = null) {
+  if (guildOverride?.id) return guildOverride;
+
+  const cached =
+    client.channels.cache.get(CHANNELS.START_HERE)?.guild ||
+    client.channels.cache.get(WELCOME_CATEGORY_ID)?.guild;
+
+  if (cached) return cached;
+
+  const startHere = await client.channels
+    .fetch(CHANNELS.START_HERE)
+    .catch(() => null);
+
+  if (startHere?.guild) return startHere.guild;
+
+  const welcomeCategory = await client.channels
+    .fetch(WELCOME_CATEGORY_ID)
+    .catch(() => null);
+
+  if (welcomeCategory?.guild) return welcomeCategory.guild;
+
   return client.guilds.cache.first() || null;
 }
 
@@ -2878,9 +2906,15 @@ function startScheduler() {
 // ASHEN SIDEBAR THEME
 // =====================================================
 
-async function applyAshenSidebarTheme() {
-  const guild = getGuild();
-  const report = { renamed: [], skipped: [], failed: [] };
+async function applyAshenSidebarTheme(guildOverride = null) {
+  const guild = await resolveAshenGuild(guildOverride);
+  const report = {
+    guildName: guild?.name || null,
+    guildId: guild?.id || null,
+    renamed: [],
+    skipped: [],
+    failed: []
+  };
 
   if (!guild) {
     report.failed.push("Guild unavailable");
@@ -3329,7 +3363,7 @@ client.on(Events.InteractionCreate, async interaction => {
         );
       }
 
-      const report = await applyAshenSidebarTheme();
+      const report = await applyAshenSidebarTheme(interaction.guild);
 
       const renamed = report.renamed.length
         ? report.renamed.slice(0, 12).map(x => `✅ ${x}`).join("\n")
@@ -3342,6 +3376,8 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.editReply({
         content:
           `# 🖤 Ashen Theme Applied\n\n` +
+          `**Server:** ${report.guildName || "Unknown"}\n` +
+          `**Server ID:** ${report.guildId || "Unknown"}\n` +
           `**Renamed:** ${report.renamed.length}\n` +
           `**Already styled:** ${report.skipped.length}\n` +
           `**Failed:** ${report.failed.length}\n\n` +
@@ -4155,7 +4191,9 @@ client.once(Events.ClientReady, async readyClient => {
     console.error("⚠️ Legacy panel cleanup:", error.message);
   });
 
-  await applyAshenSidebarTheme().catch(error => {
+  const ashenGuild = await resolveAshenGuild().catch(() => null);
+
+  await applyAshenSidebarTheme(ashenGuild).catch(error => {
     console.error("⚠️ Ashen sidebar theme:", error.message);
   });
 
