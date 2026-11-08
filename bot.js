@@ -1078,131 +1078,80 @@ async function setupPreferences() {
   const channel = await client.channels.fetch(CHANNELS.PREFERENCES);
   if (!channel?.isTextBased()) return;
 
+  // Reaction icons are functional selectors. Panel text stays minimal.
   preferenceMessages.languages = await createPreferencePanel(
-    channel,
-    "panel_pref_languages",
-    `# 🌎 Language Access
+    channel, "panel_pref_languages",
+    `# LANGUAGE ACCESS
+Select the language channels you want by using the reactions below.
 
-React to **every language chat** you want access to. You can join one or all of them.
+English · Spanish · French · German · Portuguese · Japanese
 
-🇺🇸 **English**
-🇪🇸 **Spanish**
-🇫🇷 **French**
-🇩🇪 **German**
-🇵🇹 **Portuguese**
-🇯🇵 **Japanese**
-
-*Your primary notification language is managed separately in My Vestra Settings.*`,
+Primary notification language is set separately in Settings.`,
     Object.values(LANGUAGES).map(x => x.emoji),
-    "# 🌎 Language Access"
+    "# LANGUAGE ACCESS"
   );
 
   preferenceMessages.reminders = await createPreferencePanel(
-    channel,
-    "panel_pref_reminders",
-    `# 🔔 Game & Guild Reminder Pings
+    channel, "panel_pref_reminders",
+    `# GUILD ALERTS
+Subscribe with the reactions below. Notifications go to your selected General channel.
 
-React to every reminder you want. Vestra sends the actual alert in your **primary notification language**.
+Reset · Morning Conquest · Night Conquest
+Clash Opening · Clash Battle · Clash Final · Registration
 
-🔄 **Reset**
-🌅 **Morning Conquest**
-🌌 **Night Conquest**
-🔔 **Clash Opening Call**
-⚔️ **Clash Battle Call**
-🚨 **Clash Final Call**
-⏰ **Guild Clash Registration**
-
-*Only the reminders you choose will ping you.*`,
+Only selected alerts will notify you.`,
     Object.values(REMINDERS).map(x => x.emoji),
-    "# 🔔 Game & Guild Reminder Pings"
+    "# GUILD ALERTS"
   );
 
   preferenceMessages.tournaments = await createPreferencePanel(
-    channel,
-    "panel_pref_tournaments",
-    `# 🏆 Tournament Pings
+    channel, "panel_pref_tournaments",
+    `# TOURNAMENT ALERTS
+Subscribe to Server Tournament, Nexus Tournament, or both.
 
-Want tournament alerts? React below. Vestra sends them in your **primary notification language**.
+**Server Tournament** — Saturdays, 2 PM Standard / 3 PM DST
+**Nexus Tournament** — alternating Sundays, 3 PM Standard / 4 PM DST
 
-⚔️ **Server Tournament**
-Starts **2:00 PM Standard / 3:00 PM DST**
-
-🌀 **Nexus Tournament**
-Starts **3:00 PM Standard / 4:00 PM DST**
-
-Voting rounds are opened manually by Ashen staff when each battle is ready.`,
+Staff opens voting rounds when each battle is ready.`,
     Object.values(TOURNAMENTS).map(x => x.emoji),
-    "# 🏆 Tournament Pings"
+    "# TOURNAMENT ALERTS"
   );
 
   preferenceMessages.playstyle = await createPreferencePanel(
-    channel,
-    "panel_pref_playstyle",
-    `# 🎮 Playstyle
-
-Choose the option that fits you best.
-
-🌿 **Casual** — here to relax and have fun
-⚔️ **Competitive** — you like pushing and competing
-🎮 **Both** — depends on the day`,
+    channel, "panel_pref_playstyle",
+    `# PLAYSTYLE
+Select Casual, Competitive, or Both using the reactions below.`,
     Object.values(PLAYSTYLE).map(x => x.emoji),
-    "# 🎮 Playstyle"
+    "# PLAYSTYLE"
   );
 
   preferenceMessages.social = await createPreferencePanel(
-    channel,
-    "panel_pref_social",
-    `# 💬 Social Preference
-
-Let people know how you usually like to interact.
-
-💬 **Chatty** — come talk to me!
-🌙 **Quiet** — I’m around, just quieter
-✨ **Either** — I can go either way`,
+    channel, "panel_pref_social",
+    `# SOCIAL
+Select Chatty, Quiet, or Either using the reactions below.`,
     Object.values(SOCIAL).map(x => x.emoji),
-    "# 💬 Social Preference"
+    "# SOCIAL"
   );
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("settings_open")
-      .setLabel("Open My Vestra Settings")
-      .setEmoji("✨")
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId("settings_card")
-      .setLabel("My Vestra Card")
-      .setEmoji("👤")
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId("admin_apply_theme")
-      .setLabel("Apply Ashen Theme")
-      .setEmoji("🖤")
-      .setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId("settings_open")
+      .setLabel("Open Settings").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("settings_card")
+      .setLabel("View Profile").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("admin_apply_theme")
+      .setLabel("Apply Ashen Theme").setStyle(ButtonStyle.Secondary)
   );
 
-  const settingsContent = `# ✨ My Vestra Settings
+  const settingsContent = `# VESTRA / SETTINGS
+Control your language access, notification language, reminders, tournament alerts, playstyle, and social preference.
 
-Want everything in one place? Open your personal Vestra panel to review and change your setup anytime.
-
-🌎 **Language access**
-🔔 **Primary notification language**
-⏰ **Game & guild pings**
-🏆 **Tournament pings**
-🎮 **Playstyle**
-💬 **Social preference**
-
-## 💡 Quick Tip
-The reactions above are perfect for fast changes. **My Vestra Settings** is best when you want to review everything at once.`;
+Use the reactions above for quick changes or open Settings to manage everything in one place.`;
 
   await upsertBotPanel(
-    channel,
-    "panel_pref_settings",
+    channel, "panel_pref_settings",
     { content: settingsContent, embeds: [], components: [row] },
-    "# ✨ My Vestra Settings"
+    "# VESTRA / SETTINGS"
   );
-
-  console.log("✅ Preference panels and Vestra settings ready.");
 }
 
 async function setupHelpCenter() {
