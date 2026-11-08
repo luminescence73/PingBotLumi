@@ -2506,29 +2506,21 @@ function eventApplies(event, y, m, d, weekday) {
 
 async function sendMasterLog(roleId, label, text, deliveredCount) {
   const channel = await client.channels.fetch(CHANNELS.REMINDERS).catch(() => null);
-  if (!channel?.isTextBased()) throw new Error("#guild-pings is unavailable");
+  if (!channel?.isTextBased()) throw new Error("#alert-history is unavailable");
 
-  const embed = brandEmbed(
-    `🔔 ${label}`,
-    text || "Event notification sent."
-  )
-    .addFields(
-      {
-        name: "🌎 Localized Delivery",
-        value: `${deliveredCount} member${deliveredCount === 1 ? "" : "s"} notified in their primary-language General channel.`,
-        inline: false
-      },
-      {
-        name: "🎯 Subscriber Role",
-        value: roleId ? `<@&${roleId}>` : "No role",
-        inline: false
-      }
-    )
-    .setFooter({ text: "Vestra • Guild Ping Log • This message does not ping members" })
-    .setTimestamp();
+  // Keep the older compact alert-history format. The role mention is displayed
+  // for reference, but the archive doesn't generate duplicate notifications;
+  // subscribed members are notified in their language's General channel.
+  const displayedRole = roleId ? `<@&${roleId}>` : "";
+  const message = [
+    [displayedRole, `**${label}**`].filter(Boolean).join(" "),
+    text || "Event notification sent.",
+    "",
+    `🌎 Vestra delivered ${deliveredCount} localized notifications.`
+  ].join("\n");
 
   await channel.send({
-    embeds: [embed],
+    content: message,
     allowedMentions: { parse: [] }
   });
 }
