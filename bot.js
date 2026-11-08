@@ -3899,23 +3899,23 @@ async function applyAshenSidebarTheme(guildOverride = null) {
     categoryWith("ashen social", "ashen | commons");
   const voice = categoryWith("ashen voice", "voice calls", "ashen | voice");
 
-  await rename(entry, "ASHEN | ENTRY");
-  await rename(command, "ASHEN | COMMAND");
-  await rename(ops, "SWORD X STAFF | OPERATIONS");
-  await rename(commons, "ASHEN | COMMONS");
-  await rename(voice, "ASHEN | VOICE");
+  await rename(entry, "✦ ASHEN | ENTRY");
+  await rename(command, "♱ ASHEN | COMMAND");
+  await rename(ops, "⟡ SWORD X STAFF | OPERATIONS");
+  await rename(commons, "◇ ASHEN | COMMONS");
+  await rename(voice, "⌁ ASHEN | VOICE");
 
   const names = new Map([
-    [CHANNELS.START_HERE, "entry"],
-    [CHANNELS.RULES, "code"],
-    [CHANNELS.ONBOARDING, "induction"],
+    [CHANNELS.START_HERE, "✦・entry"],
+    [CHANNELS.RULES, "♱・code"],
+    [CHANNELS.ONBOARDING, "✦・induction"],
     [CHANNELS.HELP, "support"],
     [CHANNELS.STAFF_REQUESTS, "command-requests"],
     [CHANNELS.INTRODUCTIONS, "roster"],
-    [CHANNELS.PREFERENCES, "vestra-settings"],
-    [CHANNELS.REMINDERS, "alert-history"],
+    [CHANNELS.PREFERENCES, "◇・vestra-settings"],
+    [CHANNELS.REMINDERS, "⌁・alert-history"],
     [CHANNELS.HIGHLIGHTS, "highlights"],
-    [CHANNELS.EVENT_BOARD, "war-board"],
+    [CHANNELS.EVENT_BOARD, "♱・war-board"],
     [LANGUAGE_CHANNELS.english.channel, "general-en"],
     [LANGUAGE_CHANNELS.spanish.channel, "general-es"],
     [LANGUAGE_CHANNELS.french.channel, "general-fr"],
@@ -3939,7 +3939,7 @@ async function applyAshenSidebarTheme(guildOverride = null) {
   const announcements = channelWith("ashen-announcements", "admin-announcements");
   const gameAnnouncements = channelWith("sxs-announcements", "game-announcements");
   const gameBoard = channelWith("sxs-event-board");
-  await rename(showcase, "ashen-showcase");
+  await rename(showcase, "⟡・ashen-showcase");
   await rename(announcements, "ashen-announcements");
   await rename(gameAnnouncements, "sxs-announcements");
   await rename(gameBoard, "sxs-event-board");
@@ -5247,13 +5247,9 @@ client.once(Events.ClientReady, async readyClient => {
     console.error("❌ Could not complete old alert-history conversion:", error);
   });
 
-  void (async () => {
-    await backfillLegacyAshenMembersPosts(ashenGuild);
-    await restyleAshenShowcaseHistory(ashenGuild);
-    await rebuildAllAshenThreadTitles(ashenGuild);
-  })().catch(error => {
-    console.error("❌ Ashen Members historical showcase update:", error);
-  });
+  // Historical thread renaming is intentionally disabled. Staff have
+  // manually curated existing titles, and restarts must never replace them.
+  // New staff showcase posts still receive an immediate discussion thread.
 
   console.log("✅ Google Cloud Translation active.");
   console.log("✅ Persistent edit/delete/reaction sync active.");
