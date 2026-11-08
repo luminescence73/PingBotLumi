@@ -3085,8 +3085,7 @@ async function runPermissionChecks() {
       );
     }
 
-    const me = guild.members.me || await guild.members.fetchMe();
-    if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) {
+    if (!me?.permissions?.has(PermissionFlagsBits.ManageRoles)) {
       console.error("❌ Server: Vestra is missing Manage Roles");
     } else {
       console.log("✅ Server: Manage Roles OK");
