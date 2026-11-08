@@ -1854,7 +1854,7 @@ async function handleSocialTranslationReaction(reaction, user) {
     message = await message.fetch();
   } catch {}
 
-  if (!message?.guild || message.author?.bot || message.webhookId) return false;
+  if (!message?.guild) return false;
   if (!isReactionTranslateChannel(message.channel)) return false;
   if (emojiKey(reaction.emoji) !== SOCIAL_TRANSLATE_EMOJI) return false;
 
@@ -1901,12 +1901,34 @@ async function handleSocialTranslationReaction(reaction, user) {
     return true;
   }
 
+  const originalComparable = (message.content || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase();
+
+  const translatedComparable = (translated || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase();
+
+  if (originalComparable && originalComparable === translatedComparable) {
+    const sameLanguageText = `${target.emoji} This message already appears to be in **${target.name}**.`;
+
+    if (canSendHere) {
+      await sendTemporarySocialNotice(message, sameLanguageText, 10_000);
+    } else {
+      await user.send(sameLanguageText).catch(() => {});
+    }
+
+    return true;
+  }
+
   const requesterName = safeDisplayName(member, user);
 
   const embed = new EmbedBuilder()
     .setAuthor({
       name: safeDisplayName(message.member, message.author),
-      iconURL: message.author.displayAvatarURL({ size: 128 })
+      iconURL: message.author?.displayAvatarURL?.({ size: 128 }) || undefined
     })
     .setTitle(`${target.emoji} Translation → ${target.name}`)
     .setDescription(limitText(translated, 3900))
@@ -3035,7 +3057,7 @@ async function handleReactionChange(reaction, user, adding) {
   // Old reaction-role panels still work.
   await reactionRole(reaction, user, adding).catch(() => {});
 
-  // In Social channels, 🌐 is a translation request rather than a highlight reaction.
+  // In supported text channels, 🌐 is a translation request rather than a highlight reaction.
   if (adding && isReactionTranslateChannel(reaction.message.channel) && emojiKey(reaction.emoji) === SOCIAL_TRANSLATE_EMOJI) {
     await handleSocialTranslationReaction(reaction, user);
     return;
