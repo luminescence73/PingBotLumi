@@ -30,8 +30,8 @@ const GOOGLE_TRANSLATE_URL = "https://translation.googleapis.com/language/transl
 const HIGHLIGHT_REACTION_THRESHOLD = 4;
 const BRAND_COLOR = 0x6674F4;
 
-const WELCOME_CATEGORY_ID = "1540332301962182686";
-const IMPORTANT_CATEGORY_ID = "1507566069362069564";
+let WELCOME_CATEGORY_ID = "1540332301962182686";
+let IMPORTANT_CATEGORY_ID = "1507566069362069564";
 
 const EXTRA_REACTION_TRANSLATION_CHANNELS = new Set([
   "1507566115994472568", // SxS Media
@@ -266,7 +266,7 @@ const CHANNELS = {
   EVENT_BOARD: "1568080487115792454"
 };
 
-const SOCIAL_CATEGORY_ID = "1542252166222315532";
+let SOCIAL_CATEGORY_ID = "1542252166222315532";
 
 const SOCIAL_CHANNELS = new Set([
   "1542252582469247016", // General
@@ -2919,11 +2919,224 @@ function startScheduler() {
 }
 
 // =====================================================
+// EMERGENCY CATEGORY RECOVERY
+// =====================================================
+
+async function recoverAshenMainCategories(guildOverride = null) {
+  const guild = await resolveAshenGuild(guildOverride);
+  const report = { recreated: [], moved: [], failed: [] };
+
+  if (!guild) {
+    report.failed.push("Ashen Warriors guild unavailable");
+    return report;
+  }
+
+  await guild.channels.fetch().catch(() => {});
+
+  const categoryById = id => {
+    const channel = guild.channels.cache.get(id);
+    return channel?.type === ChannelType.GuildCategory ? channel : null;
+  };
+
+  const categoryByName = needles =>
+    guild.channels.cache.find(channel => {
+      if (channel.type !== ChannelType.GuildCategory) return false;
+      const name = channel.name.toUpperCase();
+      return needles.some(needle => name.includes(needle.toUpperCase()));
+    }) || null;
+
+  const createCategory = async name => {
+    try {
+      const category = await guild.channels.create({
+        name,
+        type: ChannelType.GuildCategory,
+        reason: "Recover accidentally deleted Ashen category"
+      });
+
+      report.recreated.push(name);
+      console.log(`🛟 Recreated category ${name}`);
+      return category;
+    } catch (error) {
+      report.failed.push(`Could not recreate ${name}: ${error.message}`);
+      return null;
+    }
+  };
+
+  const moveKnownChannel = async (channel, category) => {
+    if (!channel || !category) return;
+
+    if (channel.parentId === category.id) return;
+
+    try {
+      await channel.setParent(category.id, {
+        lockPermissions: false,
+        reason: "Recover channel after deleted Ashen category"
+      });
+      report.moved.push(channel.name);
+    } catch (error) {
+      report.failed.push(
+        `Could not restore ${channel.name} to ${category.name}: ${error.message}`
+      );
+    }
+  };
+
+  const byId = id => guild.channels.cache.get(id) || null;
+
+  // WELCOME
+  let welcome =
+    categoryById(WELCOME_CATEGORY_ID) ||
+    categoryByName(["WELCOME TO ASHEN"]);
+
+  if (!welcome) {
+    welcome = await createCategory("╭━━ 𖤐 WELCOME TO ASHEN 𖤐 ━━╮");
+  }
+
+  if (welcome) {
+    WELCOME_CATEGORY_ID = welcome.id;
+
+    for (const id of [
+      CHANNELS.START_HERE,
+      CHANNELS.RULES,
+      CHANNELS.ONBOARDING,
+      CHANNELS.HELP,
+      CHANNELS.STAFF_REQUESTS,
+      CHANNELS.INTRODUCTIONS,
+      CHANNELS.PREFERENCES
+    ]) {
+      await moveKnownChannel(byId(id), welcome);
+    }
+
+    const guildMembers = guild.channels.cache.find(
+      ch =>
+        ch.isTextBased?.() &&
+        (ch.name.includes("ashen-members") || ch.name.includes("guild-members"))
+    ) || null;
+
+    await moveKnownChannel(guildMembers, welcome);
+  }
+
+  // ASHEN INFO
+  let info =
+    categoryById(IMPORTANT_CATEGORY_ID) ||
+    categoryByName(["ASHEN INFO"]);
+
+  if (!info) {
+    info = await createCategory("╭━━ ✦ ASHEN INFO ✦ ━━╮");
+  }
+
+  if (info) {
+    IMPORTANT_CATEGORY_ID = info.id;
+
+    for (const id of [
+      CHANNELS.REMINDERS,
+      CHANNELS.HIGHLIGHTS,
+      CHANNELS.EVENT_BOARD
+    ]) {
+      await moveKnownChannel(byId(id), info);
+    }
+
+    for (const channel of guild.channels.cache.values()) {
+      if (!channel.isTextBased?.()) continue;
+      const name = channel.name.toLowerCase();
+
+      if (
+        name.includes("admin-announcements") ||
+        name.includes("ashen-announcements") ||
+        name.includes("game-announcements") ||
+        name.includes("sxs-announcements")
+      ) {
+        await moveKnownChannel(channel, info);
+      }
+    }
+  }
+
+  // SWORD X STAFF
+  let sxs = categoryByName(["SWORD X STAFF", "SWORD X", "SXS"]);
+
+  if (!sxs) {
+    sxs = await createCategory("╭━━ ⚔ SWORD X STAFF ⚔ ━━╮");
+  }
+
+  if (sxs) {
+    for (const language of Object.values(LANGUAGE_CHANNELS)) {
+      await moveKnownChannel(byId(language.channel), sxs);
+    }
+
+    await moveKnownChannel(byId("1507566115994472568"), sxs);
+    await moveKnownChannel(byId("1538251460351889599"), sxs);
+
+    const sxsEventBoard = guild.channels.cache.find(
+      ch =>
+        ch.isTextBased?.() &&
+        ch.name.includes("sxs-event-board")
+    ) || null;
+
+    await moveKnownChannel(sxsEventBoard, sxs);
+  }
+
+  // ASHEN SOCIAL
+  let social =
+    categoryById(SOCIAL_CATEGORY_ID) ||
+    categoryByName(["ASHEN SOCIAL"]);
+
+  if (!social) {
+    social = await createCategory("╭━━ ♡ ASHEN SOCIAL ♡ ━━╮");
+  }
+
+  if (social) {
+    SOCIAL_CATEGORY_ID = social.id;
+
+    for (const id of SOCIAL_CHANNELS) {
+      await moveKnownChannel(byId(id), social);
+    }
+  }
+
+  // ASHEN VOICE
+  let voice = categoryByName(["ASHEN VOICE", "VOICE CALLS"]);
+
+  if (!voice) {
+    voice = await createCategory("╭━━ 𖤐 ASHEN VOICE 𖤐 ━━╮");
+  }
+
+  if (voice) {
+    for (const channel of guild.channels.cache.values()) {
+      if (channel.type !== ChannelType.GuildVoice) continue;
+
+      const name = channel.name.toLowerCase();
+
+      if (
+        name === "general" ||
+        name.includes("gaming") ||
+        name.includes("boss grinds") ||
+        name.includes("admins")
+      ) {
+        await moveKnownChannel(channel, voice);
+      }
+    }
+  }
+
+  if (report.recreated.length || report.moved.length) {
+    console.log(
+      `🛟 Recovery complete: ${report.recreated.length} categories recreated, ${report.moved.length} channels restored.`
+    );
+  }
+
+  return report;
+}
+
+// =====================================================
 // ASHEN SIDEBAR THEME
 // =====================================================
 
 async function applyAshenSidebarTheme(guildOverride = null) {
   const guild = await resolveAshenGuild(guildOverride);
+
+  if (guild) {
+    await recoverAshenMainCategories(guild).catch(error => {
+      console.error("⚠️ Ashen category recovery:", error.message);
+    });
+  }
+
   const report = {
     guildName: guild?.name || null,
     guildId: guild?.id || null,
@@ -4631,6 +4844,10 @@ client.once(Events.ClientReady, async readyClient => {
   });
 
   const ashenGuild = await resolveAshenGuild().catch(() => null);
+
+  await recoverAshenMainCategories(ashenGuild).catch(error => {
+    console.error("⚠️ Emergency Ashen category recovery:", error.message);
+  });
 
   await applyAshenSidebarTheme(ashenGuild).catch(error => {
     console.error("⚠️ Ashen sidebar theme:", error.message);
