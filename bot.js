@@ -1450,29 +1450,147 @@ async function enforceAshenMembersStaffOnly(guild) {
 }
 
 function safeThreadTitle(message) {
-  const firstLine = (message.content || "")
-    .split("\n")
+  const authorName = message.member?.displayName ||
+    message.author?.globalName || message.author?.username || "Ashen Member";
+
+  const firstLine = (message.content || "").split("\n")
     .map(x => x.trim())
-    .find(Boolean);
+    .find(x => x && !/^(?:🎨\s*)?(?:credits?|art(?:work)? by|artist)\s*[:\-]?\s+/i.test(x));
+  const base = (firstLine || "").replace(/https?:\/\/\S+/gi, "")
+    .replace(/[^\p{L}\p{N}\s'’!?.&-]/gu, "").trim();
+  if (base.length >= 3) return base.slice(0, 80);
 
-  const authorName =
-    message.member?.displayName ||
-    message.author?.globalName ||
-    message.author?.username ||
-    "Ashen Member";
-
-  const base = firstLine
-    ? firstLine
-        .replace(/https?:\/\/\S+/gi, "")
-        .replace(/[^\p{L}\p{N}\s'’!?.&-]/gu, "")
-        .trim()
-    : "";
-
-  if (base.length >= 3) {
-    return base.slice(0, 80);
+  const image = [...(message.attachments?.values() || [])]
+    .find(a => a.contentType?.startsWith("image/") ||
+      /\.(?:png|jpe?g|gif|webp)$/i.test(a.name || ""));
+  if (image) {
+    const name = (image.name || "").replace(/\.(?:png|jpe?g|gif|webp)$/i, "")
+      .replace(/[_-]+/g, " ").trim();
+    if (name.length >= 4 && !/^(?:img|image|photo|screenshot|dsc)[\s\d_-]*$/i.test(name))
+      return ("🖼️ " + name).slice(0, 80);
+    return ("🖼️ " + authorName + "'s artwork").slice(0, 80);
   }
 
-  return `🖤 ${authorName}'s post`.slice(0, 80);
+  return ("🖤 " + authorName + "'s post").slice(0, 80);
+}
+
+// Optional visual titles: enable Google Cloud Vision API and configure
+// GOOGLE_VISION_API_KEY in Railway. Until configured, use caption/file titles.
+// Thread creation never waits for this external image-analysis request.
+async function visualAshenThreadTitle(message) {
+  const key = process.env.GOOGLE_VISION_API_KEY;
+  if (!key) return null;
+
+  const attachment = [...(message.attachments?.values() || [])]
+    .find(a => a.contentType?.startsWith("image/") ||
+      /\.(?:png|jpe?g|gif|webp)$/i.test(a.name || ""));
+  const imageUrl = attachment?.url ||
+    message.embeds?.find(e => e.image?.url)?.image?.url;
+  if (!imageUrl) return null;
+
+  const imageResponse = await fetch(imageUrl, {
+    signal: AbortSignal.timeout(12000)
+  });
+  if (!imageResponse.ok) throw new Error("Image fetch HTTP " + imageResponse.status);
+  const bytes = await imageResponse.arrayBuffer();
+  if (bytes.byteLength > 8_000_000) return null;
+
+  const result = await fetch("https://vision.googleapis.com/v1/images:annotate", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-goog-api-key": key
+    },
+    signal: AbortSignal.timeout(15000),
+    body: JSON.stringify({
+      requests: [{
+        image: { content: Buffer.from(bytes).toString("base64") },
+        features: [{ type: "LABEL_DETECTION", maxResults: 12 }]
+      }]
+    })
+  });
+  if (!result.ok) throw new Error("Google Vision HTTP " + result.status);
+  const json = await result.json();
+  if (json.responses?.[0]?.error) throw new Error(json.responses[0].error.message);
+
+  const generic = /^(?:image|photography|photograph|art|artwork|illustration|visual arts|graphic design|fictional character|font|text|computer wallpaper|drawing|clip art)$/i;
+  const labels = (json.responses?.[0]?.labelAnnotations || [])
+    .filter(x => x.score >= 0.65 && !generic.test(x.description || ""))
+    .map(x => (x.description || "").trim())
+    .filter(Boolean)
+    .slice(0, 3);
+
+  return labels.length ? ("🖼️ " + labels.join(" • ")).slice(0, 80) : null;
+}
+
+async function renameAshenThreadFromImage(message, thread) {
+  if (!thread?.isThread?.() || !process.env.GOOGLE_VISION_API_KEY) return false;
+  const expectedTitle = safeThreadTitle(message);
+  const originalLine = (message.content || "").split("\n").map(x => x.trim())
+    .find(Boolean) || "";
+  const oldGeneratedTitle = originalLine.replace(/https?:\/\/\S+/gi, "")
+    .replace(/[^\p{L}\p{N}\s'’!?.&-]/gu, "").trim().slice(0, 80);
+
+  // Respect staff-renamed threads and previously generated image titles.
+  if (thread.name !== expectedTitle && thread.name !== oldGeneratedTitle &&
+      !/^🖤 .+'s post$/.test(thread.name)) return false;
+  const title = await visualAshenThreadTitle(message);
+  if (!title || title === thread.name) return false;
+
+  const wasArchived = thread.archived === true;
+  if (wasArchived) await thread.setArchived(false, "Updating showcase title");
+  try {
+    await thread.setName(title, "Image-based Ashen showcase title");
+  } finally {
+    if (wasArchived && !thread.archived)
+      await thread.setArchived(true, "Restore original archive status").catch(() => {});
+  }
+  return true;
+}
+
+// One-time scan for existing image threads. Only runs if visual naming is
+// configured; never renames manually customized discussion titles.
+async function renameLegacyAshenImageThreads(guild) {
+  if (!process.env.GOOGLE_VISION_API_KEY) return;
+  const key = "ashen_image_titles_backfill_v1";
+  if ((await dbGetState(key))?.completed) return;
+  const channel = getAshenMembersChannel(guild);
+  if (!channel) return;
+
+  let before;
+  let checked = 0;
+  let renamed = 0;
+  let failed = 0;
+  while (true) {
+    const batch = await channel.messages.fetch({
+      limit: 100,
+      ...(before ? { before } : {})
+    });
+    if (!batch.size) break;
+
+    for (const message of batch.values()) {
+      if (message.author?.bot || !message.hasThread ||
+          !isLegacyAshenShowcasePost(message)) continue;
+
+      checked++;
+      try {
+        const thread = message.thread ||
+          await message.guild.channels.fetch(message.id).catch(() => null);
+        if (thread && await renameAshenThreadFromImage(message, thread)) renamed++;
+      } catch (error) {
+        failed++;
+        console.warn("⚠️ Historical Ashen image naming failed: " + error.message);
+      }
+    }
+
+    before = batch.last()?.id;
+    if (!before) throw new Error("Cannot paginate showcase image titles.");
+    if (batch.size < 100) break;
+  }
+
+  if (!failed) await dbSetState(key, { completed: true, checked, renamed });
+  console.log("✅ Ashen image titles: " + renamed + " renamed, " +
+    checked + " checked, " + failed + " failed.");
 }
 
 function ashenPostInfoEmbed(message) {
@@ -1756,6 +1874,10 @@ async function ensureAshenMembersDiscussion(message) {
     if (thread) {
       await upsertAshenDiscussionDetails(message, thread).catch(error => {
         console.error("❌ Could not send Ashen post details:", error.message);
+      });
+      // No delay to creating the thread; analysis renames it afterward.
+      void renameAshenThreadFromImage(message, thread).catch(error => {
+        console.warn("⚠️ Showcase image naming unavailable:", error.message);
       });
     }
   }
@@ -5596,8 +5718,11 @@ client.once(Events.ClientReady, async readyClient => {
     console.error("❌ Could not complete old alert-history conversion:", error);
   });
 
-  void backfillLegacyAshenMembersPosts(ashenGuild).catch(error => {
-    console.error("❌ Could not complete Ashen Members historical showcase backfill:", error);
+  void (async () => {
+    await backfillLegacyAshenMembersPosts(ashenGuild);
+    await renameLegacyAshenImageThreads(ashenGuild);
+  })().catch(error => {
+    console.error("❌ Ashen Members historical showcase update:", error);
   });
 
   console.log("✅ Google Cloud Translation active.");
