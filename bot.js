@@ -1696,14 +1696,24 @@ async function restyleAshenShowcaseHistory(guild) {
           .replace(/[^\p{L}\p{N}\s'’!?.&-]/gu, "").trim().slice(0, 80);
         const legacyDefault = /^🖼️|^🖤 .*'s post$/.test(name);
         const plainLegacy = name === oldAutoCaption && name !== safeThreadTitle(message);
-        if (legacyDefault || plainLegacy) {
-          const betterName = /^🖼️ /u.test(name) && name.includes(" • ")
-            ? name.replace(/^🖼️ /u, "").split(" • ")[0].slice(0, 78)
-            : safeThreadTitle(message);
-          if (betterName && betterName !== name) await thread.setName(betterName, "Ashen rebrand: remove decorative titles");
+        const wasArchived = thread.archived === true;
+        const betterName = legacyDefault || plainLegacy
+          ? (/^🖼️ /u.test(name) && name.includes(" • ")
+              ? name.replace(/^🖼️ /u, "").split(" • ")[0].slice(0, 78)
+              : safeThreadTitle(message))
+          : null;
+
+        if (betterName && betterName !== name && wasArchived)
+          await thread.setArchived(false, "Update old showcase title");
+        try {
+          if (betterName && betterName !== name)
+            await thread.setName(betterName, "Ashen rebrand: remove decorative titles");
+          await upsertAshenDiscussionDetails(message, thread);
+          updated++;
+        } finally {
+          if (wasArchived && !thread.archived)
+            await thread.setArchived(true, "Restore original archive state").catch(() => {});
         }
-        await upsertAshenDiscussionDetails(message, thread);
-        updated++;
       } catch (error) {
         failed++;
         console.error("Could not restyle old Ashen showcase " + message.id + ": " + error.message);
@@ -1895,11 +1905,11 @@ async function createHelpThread(interaction, type, emoji, details) {
   }
 
   const embed = brandEmbed(
-    `${emoji} ${type}`,
+    `${type}`,
     details
   )
     .addFields({
-      name: "👤 Asked by",
+      name: "Requested by",
       value: `${interaction.member}`,
       inline: true
     })
@@ -1921,7 +1931,7 @@ async function createHelpThread(interaction, type, emoji, details) {
   });
 
   await thread.send({
-    content: `${interaction.member}, your help thread is ready! 🖤`,
+    content: `${interaction.member}, your support thread is ready.`,
     allowedMentions: {
       parse: [],
       users: [interaction.user.id]
@@ -1929,7 +1939,7 @@ async function createHelpThread(interaction, type, emoji, details) {
   });
 
   await interaction.reply({
-    content: `✅ Your request has been posted: ${thread}`,
+    content: `Request received: ${thread}`,
     flags: MessageFlags.Ephemeral
   });
 }
@@ -2512,14 +2522,14 @@ async function upsertHighlight(sourceMessage, score, reactionText = "") {
   const firstImage = [...sourceMessage.attachments.values()].find(a => a.contentType?.startsWith("image/"));
   const embed = new EmbedBuilder()
     .setColor(BRAND_COLOR)
-    .setTitle("✦ ASHEN HIGHLIGHT")
+    .setTitle("ASHEN | DISTINGUISHED")
     .setAuthor({
       name: safeDisplayName(sourceMessage.member, sourceMessage.author),
       iconURL: sourceMessage.author.displayAvatarURL({ size: 128 })
     })
     .setDescription(limitText(sourceMessage.content || "*(attachment / media post)*", 3500))
     .addFields(
-      { name: "♡ COMMUNITY LOVE", value: reactionText || `${score} reactions`, inline: true },
+      { name: "Community recognition", value: reactionText || `${score} reactions`, inline: true },
       { name: "↗ VIEW ORIGINAL", value: `[Jump to message](${sourceMessage.url})`, inline: true }
     )
     .setFooter({ text: "Vestra • Chosen by the Ashen community" })
@@ -4099,7 +4109,7 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isButton() && interaction.customId === "admin_apply_theme") {
       if (!isStaff(interaction.member)) {
         return interaction.reply({
-          content: "🖤 This control is only available to Ashen staff.",
+          content: "Staff access required.",
           flags: MessageFlags.Ephemeral
         });
       }
@@ -4209,17 +4219,17 @@ client.on(Events.InteractionCreate, async interaction => {
       )
         .addFields(
           {
-            name: "👤 Member",
+            name: "Member",
             value: `${interaction.member}`,
             inline: true
           },
           {
-            name: "🪪 Username",
+            name: "Username",
             value: interaction.user.username,
             inline: true
           },
           {
-            name: "📌 Status",
+            name: "Status",
             value: "New • Needs Review",
             inline: true
           }
@@ -4733,7 +4743,7 @@ Head into the server, say hi, and make yourself at home. 🖤`,
           default: selected.includes(key)
         })));
       return interaction.update({
-        embeds: [new EmbedBuilder().setTitle("🌎 Language Access").setDescription("Choose every General language channel you want to see.")],
+        embeds: [new EmbedBuilder().setTitle("LANGUAGE ACCESS").setDescription("Choose every General language channel you want to see.")],
         components: [new ActionRowBuilder().addComponents(menu), backButtonRow()]
       });
     }
@@ -4768,7 +4778,7 @@ Head into the server, say hi, and make yourself at home. 🖤`,
           default: current === key
         })));
       return interaction.update({
-        embeds: [new EmbedBuilder().setTitle("🔔 Primary Notification Language").setDescription("Vestra sends your event pings **once**, in this language's General channel.")],
+        embeds: [new EmbedBuilder().setTitle("NOTIFICATION LANGUAGE").setDescription("Vestra sends your event pings **once**, in this language's General channel.")],
         components: [new ActionRowBuilder().addComponents(menu), backButtonRow()]
       });
     }
@@ -4834,7 +4844,7 @@ Head into the server, say hi, and make yourself at home. 🖤`,
           { label: "No tournament pings", value: "none", emoji: "🔕", default: selected.length === 0 }
         );
       return interaction.update({
-        embeds: [new EmbedBuilder().setTitle("🏆 Tournament Pings").setDescription("Opt in to Server Tournament, Nexus Tournament, both, or neither.")],
+        embeds: [new EmbedBuilder().setTitle("TOURNAMENT ALERTS").setDescription("Opt in to Server Tournament, Nexus Tournament, both, or neither.")],
         components: [new ActionRowBuilder().addComponents(menu), backButtonRow()]
       });
     }
@@ -4861,7 +4871,7 @@ Head into the server, say hi, and make yourself at home. 🖤`,
           ...Object.entries(PLAYSTYLE).map(([key, item]) => ({ label: item.name, value: key, emoji: item.emoji })),
           { label: "None", value: "none", emoji: "⏭️" }
         );
-      return interaction.update({ embeds: [new EmbedBuilder().setTitle("🎮 Playstyle")], components: [new ActionRowBuilder().addComponents(menu), backButtonRow()] });
+      return interaction.update({ embeds: [new EmbedBuilder().setTitle("PLAYSTYLE")], components: [new ActionRowBuilder().addComponents(menu), backButtonRow()] });
     }
 
     if (interaction.isStringSelectMenu() && interaction.customId === "settings_playstyle_select") {
@@ -4883,7 +4893,7 @@ Head into the server, say hi, and make yourself at home. 🖤`,
           ...Object.entries(SOCIAL).map(([key, item]) => ({ label: item.name, value: key, emoji: item.emoji })),
           { label: "None", value: "none", emoji: "⏭️" }
         );
-      return interaction.update({ embeds: [new EmbedBuilder().setTitle("💬 Social Preference")], components: [new ActionRowBuilder().addComponents(menu), backButtonRow()] });
+      return interaction.update({ embeds: [new EmbedBuilder().setTitle("SOCIAL")], components: [new ActionRowBuilder().addComponents(menu), backButtonRow()] });
     }
 
     if (interaction.isStringSelectMenu() && interaction.customId === "settings_social_select") {
@@ -4917,7 +4927,7 @@ Head into the server, say hi, and make yourself at home. 🖤`,
       const state = await getActiveTournamentState();
       if (!state) return interaction.reply({ content: "❌ No active tournament.", flags: MessageFlags.Ephemeral });
       await finishTournament(state.tournament);
-      return interaction.reply({ content: "🏁 Tournament Mode finished. The Live Event Board is back to normal.", flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: "Tournament closed. The War Board has returned to the standard schedule.", flags: MessageFlags.Ephemeral });
     }
 
   } catch (error) {
