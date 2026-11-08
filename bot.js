@@ -1848,24 +1848,38 @@ async function sendTemporarySocialNotice(message, content, deleteAfterMs = 10_00
 }
 
 async function handleSocialTranslationReaction(reaction, user) {
-  const message = reaction.message;
+  let message = reaction.message;
 
-  if (!message.guild || message.author?.bot || message.webhookId) return false;
+  try {
+    message = await message.fetch();
+  } catch {}
+
+  if (!message?.guild || message.author?.bot || message.webhookId) return false;
   if (!isReactionTranslateChannel(message.channel)) return false;
   if (emojiKey(reaction.emoji) !== SOCIAL_TRANSLATE_EMOJI) return false;
+
+  console.log(`🌐 Translation requested in #${message.channel.name} by ${user.tag}`);
+
+  const member = await message.guild.members.fetch(user.id).catch(() => null);
+  if (!member) return true;
+
+  const me = message.guild.members.me || await message.guild.members.fetchMe().catch(() => null);
+  const perms = me ? message.channel.permissionsFor(me) : null;
+  const canSendHere = !!perms?.has(PermissionFlagsBits.SendMessages);
 
   await removeSocialTranslationReaction(reaction, user.id);
 
   if (!message.content || !hasTranslatableText(message.content)) {
-    await sendTemporarySocialNotice(
-      message,
-      "🌐 Vestra can only translate messages that contain text."
-    );
+    if (canSendHere) {
+      await sendTemporarySocialNotice(
+        message,
+        "🌐 Vestra can only translate messages that contain text."
+      );
+    } else {
+      await user.send("🌐 Vestra can only translate messages that contain text.").catch(() => {});
+    }
     return true;
   }
-
-  const member = await message.guild.members.fetch(user.id).catch(() => null);
-  if (!member) return true;
 
   const targetKey = await inferPrimaryLanguage(member);
   const target = LANGUAGE_CHANNELS[targetKey];
@@ -1875,10 +1889,15 @@ async function handleSocialTranslationReaction(reaction, user) {
     translated = await googleTranslate(message.content, target.code, null);
   } catch (error) {
     console.error("❌ Reaction translation:", error.message);
-    await sendTemporarySocialNotice(
-      message,
-      "🌐 Translation is temporarily unavailable. Please try again."
-    );
+
+    const failureText = "🌐 Translation is temporarily unavailable. Please try again.";
+
+    if (canSendHere) {
+      await sendTemporarySocialNotice(message, failureText);
+    } else {
+      await user.send(failureText).catch(() => {});
+    }
+
     return true;
   }
 
@@ -1895,19 +1914,34 @@ async function handleSocialTranslationReaction(reaction, user) {
       text: `Requested by ${requesterName} • Auto-deletes in 30s • Vestra`
     });
 
-  const translatedReply = await message.reply({
-    embeds: [embed],
-    allowedMentions: { parse: [], repliedUser: false }
-  }).catch(error => {
-    console.error("❌ Reaction translation reply:", error.message);
-    return null;
-  });
+  let translatedReply = null;
 
-  if (translatedReply) {
-    setTimeout(() => {
-      void translatedReply.delete().catch(() => {});
-    }, SOCIAL_TRANSLATION_DELETE_MS);
+  if (canSendHere) {
+    translatedReply = await message.reply({
+      embeds: [embed],
+      allowedMentions: { parse: [], repliedUser: false }
+    }).catch(error => {
+      console.error(`❌ Reaction translation reply in #${message.channel.name}:`, error.message);
+      return null;
+    });
   }
+
+  if (!translatedReply) {
+    console.warn(`⚠️ Could not reply in #${message.channel.name}; sending translation by DM instead.`);
+
+    await user.send({
+      content: `🌐 **Translation from #${message.channel.name}**\n${message.url}`,
+      embeds: [embed]
+    }).catch(error => {
+      console.error("❌ Translation DM fallback:", error.message);
+    });
+
+    return true;
+  }
+
+  setTimeout(() => {
+    void translatedReply.delete().catch(() => {});
+  }, SOCIAL_TRANSLATION_DELETE_MS);
 
   return true;
 }
@@ -2810,6 +2844,8 @@ async function runPermissionChecks() {
       channel => isReactionTranslateChannel(channel)
     );
 
+    console.log(`🌐 Translation audit: checking ${reactionTranslateChannels.size} supported text channel(s).`);
+
     for (const channel of reactionTranslateChannels.values()) {
       await checkChannelPermissions(
         channel.id,
@@ -2989,7 +3025,12 @@ client.on(Events.MessageDelete, async message => {
 async function handleReactionChange(reaction, user, adding) {
   if (user.bot) return;
   if (reaction.partial) await reaction.fetch();
-  if (reaction.message.partial) await reaction.message.fetch();
+
+  try {
+    reaction.message = await reaction.message.fetch();
+  } catch {
+    if (reaction.message.partial) await reaction.message.fetch();
+  }
 
   // Old reaction-role panels still work.
   await reactionRole(reaction, user, adding).catch(() => {});
