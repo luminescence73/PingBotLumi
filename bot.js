@@ -2504,25 +2504,109 @@ function eventApplies(event, y, m, d, weekday) {
 // LOCALIZED NOTIFICATION DELIVERY
 // =====================================================
 
+function formatAlertHistoryMessage(roleId, label, text, deliveredCount) {
+  const displayedRole = roleId ? `<@&${roleId}>` : "";
+  return [
+    [displayedRole, `**${label}**`].filter(Boolean).join(" "),
+    text || "Event notification sent.",
+    "",
+    Number.isInteger(deliveredCount)
+      ? `🌎 Vestra delivered ${deliveredCount} localized notifications.`
+      : "🌎 Localized delivery count was not recorded."
+  ].join("\n");
+}
+
 async function sendMasterLog(roleId, label, text, deliveredCount) {
   const channel = await client.channels.fetch(CHANNELS.REMINDERS).catch(() => null);
   if (!channel?.isTextBased()) throw new Error("#alert-history is unavailable");
 
-  // Keep the older compact alert-history format. The role mention is displayed
-  // for reference, but the archive doesn't generate duplicate notifications;
-  // subscribed members are notified in their language's General channel.
-  const displayedRole = roleId ? `<@&${roleId}>` : "";
-  const message = [
-    [displayedRole, `**${label}**`].filter(Boolean).join(" "),
-    text || "Event notification sent.",
-    "",
-    `🌎 Vestra delivered ${deliveredCount} localized notifications.`
-  ].join("\n");
-
+  // This archival copy must not generate another ping.
   await channel.send({
-    content: message,
+    content: formatAlertHistoryMessage(roleId, label, text, deliveredCount),
     allowedMentions: { parse: [] }
   });
+}
+
+// Convert Vestra's old boxed event-log embeds into the same compact
+// text format without deleting/reposting messages or changing timestamps.
+async function migrateLegacyAlertHistory() {
+  const completionKey = "alert_history_plaintext_migration_v1";
+  if ((await dbGetState(completionKey))?.completed) return;
+
+  const channel = await client.channels.fetch(CHANNELS.REMINDERS).catch(() => null);
+  if (!channel?.isTextBased() || !channel.messages?.fetch) {
+    console.warn("⚠️ Alert history cleanup postponed: channel unavailable.");
+    return;
+  }
+
+  let before;
+  let inspected = 0;
+  let converted = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  while (true) {
+    const page = await channel.messages.fetch({
+      limit: 100,
+      ...(before ? { before } : {})
+    });
+
+    if (!page.size) break;
+
+    for (const message of page.values()) {
+      inspected++;
+      if (message.author.id !== client.user.id) continue;
+
+      // Leave the important #alert-history information panel alone.
+      if (message.content?.includes("# 🔔 Ashen Guild Ping Log")) continue;
+
+      const embed = message.embeds?.find(e => {
+        const fieldNames = (e.fields || []).map(f => f.name || "");
+        return (
+          e.title?.startsWith("🔔 ") &&
+          fieldNames.some(name => name.includes("Localized Delivery")) &&
+          fieldNames.some(name => name.includes("Subscriber Role"))
+        );
+      });
+      if (!embed) continue;
+
+      const roleField = embed.fields.find(field => field.name.includes("Subscriber Role"));
+      const deliveryField = embed.fields.find(field => field.name.includes("Localized Delivery"));
+      const roleId = roleField?.value?.match(/<@&(\d+)>/)?.[1] || null;
+      const reportedCount = deliveryField?.value?.match(/(\d+)\s+members?\s+notified/i);
+      const count = reportedCount ? Number(reportedCount[1]) : null;
+      const label = embed.title.slice("🔔 ".length).trim();
+      const content = formatAlertHistoryMessage(
+        roleId,
+        label,
+        embed.description || "Event notification sent.",
+        count
+      );
+
+      try {
+        await message.edit({
+          content,
+          embeds: [],
+          allowedMentions: { parse: [] }
+        });
+        converted++;
+      } catch (error) {
+        failed++;
+        console.error(`❌ Could not convert alert-history message ${message.id}:`, error.message);
+      }
+    }
+
+    before = page.last()?.id;
+    if (!before) throw new Error("Alert-history pagination stopped unexpectedly.");
+    if (page.size < 100) break;
+  }
+
+  // A failed edit may be retried at the next restart; already-converted
+  // messages have no embedded alert to convert a second time.
+  if (failed === 0) {
+    await dbSetState(completionKey, { completed: true, inspected, converted });
+  }
+  console.log(`✅ Alert history cleanup: ${converted} converted, ${failed} failed, ${inspected} scanned.`);
 }
 
 async function ensureLanguageAccess(member, languageKey) {
@@ -5282,6 +5366,12 @@ client.once(Events.ClientReady, async readyClient => {
   }
 
   startScheduler();
+
+  // Safe one-time migration of Vestra's existing event logs. Runs after
+  // scheduled notifications are enabled so history cleanup cannot delay them.
+  void migrateLegacyAlertHistory().catch(error => {
+    console.error("❌ Could not complete old alert-history conversion:", error);
+  });
 
   console.log("✅ Google Cloud Translation active.");
   console.log("✅ Persistent edit/delete/reaction sync active.");
