@@ -1403,6 +1403,51 @@ function safeThreadTitle(message) {
   return `🖤 ${authorName}'s post`.slice(0, 80);
 }
 
+function ashenPostInfoEmbed(message) {
+  const rawCaption = (message.content || "").trim();
+  // Mentions in the source post (e.g. <@123>) are kept for attribution.
+  const creditPattern = /(?:^|[\s.!?])(?:🎨\s*)?(?:credits?(?:\s+to|\s+by)?|art(?:work)?\s+by|illustration\s+by|created\s+by|made\s+by|artist)\s*[:\-–]?\s*(.+)$/im;
+  const match = creditPattern.exec(rawCaption);
+  const credits = match?.[1]?.trim() || "Not specified";
+  const caption = match ? rawCaption.replace(match[0], "").trim() : rawCaption;
+  const attachmentCount = message.attachments?.size || 0;
+
+  const embed = new EmbedBuilder()
+    .setColor(BRAND_COLOR)
+    .setTitle("🖼️ Ashen Post Details")
+    .addFields(
+      { name: "👤 Posted by", value: "<@" + message.author.id + ">", inline: true },
+      { name: "🎨 Creator credits", value: limitText(credits, 1024), inline: true },
+      { name: "📅 Posted", value: "<t:" + Math.floor(message.createdTimestamp / 1000) + ":f>", inline: false },
+      { name: "📎 Attachments", value: attachmentCount ? (attachmentCount + " file" + (attachmentCount === 1 ? "" : "s")) : "None", inline: true },
+      { name: "🔗 Original post", value: "[View original](" + message.url + ")", inline: true }
+    )
+    .setFooter({ text: "Vestra • Ashen Members • " + message.id });
+
+  if (caption) embed.addFields({ name: "📝 Caption", value: limitText(caption, 1024) });
+  return embed;
+}
+
+async function refreshAshenMembersPostInfo(message) {
+  const channel = getAshenMembersChannel(message.guild);
+  if (!channel || message.channel.id !== channel.id || !message.hasThread) return;
+
+  const thread = message.thread ||
+    await message.guild.channels.fetch(message.id).catch(() => null);
+  if (!thread?.isThread?.()) return;
+
+  const messages = await thread.messages.fetch({ limit: 100 }).catch(() => null);
+  const detailsPost = messages?.find(m =>
+    m.author?.id === client.user?.id &&
+    m.embeds?.some(e => e.footer?.text === ("Vestra • Ashen Members • " + message.id))
+  );
+  if (detailsPost) {
+    await detailsPost.edit({ embeds: [ashenPostInfoEmbed(message)] }).catch(error => {
+      console.error("❌ Could not refresh Ashen post credits:", error.message);
+    });
+  }
+}
+
 async function ensureAshenMembersDiscussion(message) {
   if (!message?.guild || message.author?.bot || message.webhookId) {
     return false;
@@ -1483,16 +1528,17 @@ async function ensureAshenMembersDiscussion(message) {
       });
 
     if (thread) {
-      await thread
-        .send({
-          content:
-            "## 💬 Discuss This Post\n" +
-            "Talk, react, ask questions, or share thoughts **here** so " +
-            "<#"+showcaseChannel.id+"> stays a clean showcase feed.\n\n" +
-            "*Vestra automatically creates one discussion space for every Ashen post.*",
-          allowedMentions: { parse: [] }
-        })
-        .catch(() => {});
+      await thread.send({
+        content:
+          "## 💬 Discuss This Post\n" +
+          "Share your thoughts, questions, and comments here so " +
+          "<#" + showcaseChannel.id + "> stays a clean showcase feed.\n\n" +
+          "*Vestra automatically creates one discussion space for every Ashen post.*",
+        embeds: [ashenPostInfoEmbed(message)],
+        allowedMentions: { parse: [] }
+      }).catch(error => {
+        console.error("❌ Could not send Ashen post details:", error.message);
+      });
     }
   }
 
@@ -1522,6 +1568,9 @@ Share guild art, screenshots, event graphics, projects, achievements, memories, 
 Post your showcase item normally in this channel. **Vestra automatically opens a discussion thread underneath every post.**
 
 Use that thread for comments, questions, reactions, and conversation so the main channel stays easy to browse.
+
+## 🎨 Artist & Creator Credits
+When sharing someone else's art, graphics, or other creations, include **Credits to @artist** or **Art by @artist** in your caption. Vestra displays the credit in the post's discussion thread alongside its details. Credits are never assumed from the person posting.
 
 ## 👥 Our Community
 **${humanMembers.size}** members
@@ -4193,6 +4242,7 @@ client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
   try {
     if (newMessage.partial) newMessage = await newMessage.fetch();
     if (!newMessage.guild || newMessage.author?.bot || newMessage.webhookId) return;
+    await refreshAshenMembersPostInfo(newMessage);
     if (languageByChannel(newMessage.channel.id)) await handleGeneralMessageUpdate(newMessage);
   } catch (error) {
     console.error("❌ MessageUpdate handler:", error);
