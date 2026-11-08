@@ -2015,10 +2015,9 @@ async function ensureAshenMembersDiscussion(message) {
       await upsertAshenDiscussionDetails(message, thread).catch(error => {
         console.error("❌ Could not send Ashen post details:", error.message);
       });
-      // No delay to creating the thread; analysis renames it afterward.
-      void renameAshenThreadFromImage(message, thread).catch(error => {
-        console.warn("⚠️ Showcase image naming unavailable:", error.message);
-      });
+      // Keep the original thread name. Discord generates a non-deletable
+      // system message whenever a thread is renamed, so never automatically
+      // rename live Ashen threads after creation. Existing custom names stay.
     }
   }
 
