@@ -1115,9 +1115,7 @@ Select Chatty, Quiet, or Either using the reactions below.`,
     new ButtonBuilder().setCustomId("settings_open")
       .setLabel("Open Settings").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("settings_card")
-      .setLabel("View Profile").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("admin_apply_theme")
-      .setLabel("Apply Ashen Theme").setStyle(ButtonStyle.Secondary)
+      .setLabel("View Profile").setStyle(ButtonStyle.Secondary)
   );
 
   const settingsContent = `# VESTRA / SETTINGS
@@ -1484,70 +1482,6 @@ async function visualAshenThreadTitle(message) {
   return subject ? subject.replace(/\b\w/g, c => c.toUpperCase()) : null;
 }
 
-async function renameAshenThreadFromImage(message, thread) {
-  if (!thread?.isThread?.() || !process.env.GOOGLE_VISION_API_KEY) return false;
-  if (ashenCaptionTitle(message)) return false;
-  if (cleanAshenThreadTitle(thread.name) !== safeThreadTitle(message)) return false;
-
-  const title = await visualAshenThreadTitle(message);
-  if (!title || title === thread.name) return false;
-
-  const wasArchived = thread.archived === true;
-  if (wasArchived) await thread.setArchived(false, "Updating showcase title");
-  try {
-    await thread.setName(cleanAshenThreadTitle(title), "Ashen image subject title");
-  } finally {
-    if (wasArchived && !thread.archived)
-      await thread.setArchived(true, "Restore original archive status").catch(() => {});
-  }
-  return true;
-}
-
-// One-time scan for existing image threads. Only runs if visual naming is
-// configured; never renames manually customized discussion titles.
-async function renameLegacyAshenImageThreads(guild) {
-  if (!process.env.GOOGLE_VISION_API_KEY) return;
-  const key = "ashen_image_titles_backfill_v1";
-  if ((await dbGetState(key))?.completed) return;
-  const channel = getAshenMembersChannel(guild);
-  if (!channel) return;
-
-  let before;
-  let checked = 0;
-  let renamed = 0;
-  let failed = 0;
-  while (true) {
-    const batch = await channel.messages.fetch({
-      limit: 100,
-      ...(before ? { before } : {})
-    });
-    if (!batch.size) break;
-
-    for (const message of batch.values()) {
-      if (message.author?.bot || !message.hasThread ||
-          !isLegacyAshenShowcasePost(message)) continue;
-
-      checked++;
-      try {
-        const thread = message.thread ||
-          await message.guild.channels.fetch(message.id).catch(() => null);
-        if (thread && await renameAshenThreadFromImage(message, thread)) renamed++;
-      } catch (error) {
-        failed++;
-        console.warn("⚠️ Historical Ashen image naming failed: " + error.message);
-      }
-    }
-
-    before = batch.last()?.id;
-    if (!before) throw new Error("Cannot paginate showcase image titles.");
-    if (batch.size < 100) break;
-  }
-
-  if (!failed) await dbSetState(key, { completed: true, checked, renamed });
-  console.log("✅ Ashen image titles: " + renamed + " renamed, " +
-    checked + " checked, " + failed + " failed.");
-}
-
 function ashenPostInfoEmbed(message) {
   const rawCaption = (message.content || "").trim();
   // Mentions in the source post (e.g. <@123>) are kept for attribution.
@@ -1735,192 +1669,6 @@ async function backfillLegacyAshenMembersPosts(guild) {
     " failed out of " + inspected + " messages inspected.");
 }
 
-// Refresh Vestra-authored showcase details and remove legacy decorated titles
-// without rewriting user captions or manually customized thread names.
-async function restyleAshenShowcaseHistory(guild) {
-  const key = "ashen_showcase_rebrand_v1";
-  if ((await dbGetState(key))?.completed) return;
-  const channel = getAshenMembersChannel(guild);
-  if (!channel) return;
-
-  let before;
-  let updated = 0;
-  let failed = 0;
-  while (true) {
-    const page = await channel.messages.fetch({
-      limit: 100,
-      ...(before ? { before } : {})
-    });
-    if (!page.size) break;
-    for (const message of page.values()) {
-      if (message.author?.bot || !message.hasThread) continue;
-      try {
-        const thread = message.thread ||
-          await message.guild.channels.fetch(message.id).catch(() => null);
-        if (!thread?.isThread?.()) continue;
-        const name = thread.name || "";
-        const firstLine = (message.content || "").split("\n").map(x => x.trim()).find(Boolean) || "";
-        const oldAutoCaption = firstLine.replace(/https?:\/\/\S+/gi, "")
-          .replace(/[^\p{L}\p{N}\s'’!?.&-]/gu, "").trim().slice(0, 80);
-        const legacyDefault = /^🖼️|^🖤 .*'s post$/.test(name);
-        const plainLegacy = name === oldAutoCaption && name !== safeThreadTitle(message);
-        const wasArchived = thread.archived === true;
-        const betterName = legacyDefault || plainLegacy
-          ? (/^🖼️ /u.test(name) && name.includes(" • ")
-              ? name.replace(/^🖼️ /u, "").split(" • ")[0].slice(0, 78)
-              : safeThreadTitle(message))
-          : null;
-
-        if (betterName && betterName !== name && wasArchived)
-          await thread.setArchived(false, "Update old showcase title");
-        try {
-          if (betterName && betterName !== name)
-            await thread.setName(betterName, "Ashen rebrand: remove decorative titles");
-          await upsertAshenDiscussionDetails(message, thread);
-          updated++;
-        } finally {
-          if (wasArchived && !thread.archived)
-            await thread.setArchived(true, "Restore original archive state").catch(() => {});
-        }
-      } catch (error) {
-        failed++;
-        console.error("Could not restyle old Ashen showcase " + message.id + ": " + error.message);
-      }
-    }
-    before = page.last()?.id;
-    if (!before) throw new Error("Missing Ashen history cursor");
-    if (page.size < 100) break;
-  }
-  if (!failed) await dbSetState(key, { completed: true, updated });
-  console.log("Ashen showcase restyle: " + updated + " refreshed, " + failed + " failed");
-}
-
-// One-time complete repair of existing showcase thread titles. Unlike prior
-// migrations, this also finds threads archived out of the guild channel cache.
-// It intentionally does NOT call Vision for old posts, preserving the quota.
-async function rebuildAllAshenThreadTitles(guild) {
-  const key = "ashen_all_thread_titles_clean_v2_20261108";
-  if ((await dbGetState(key))?.completed) return;
-  const channel = getAshenMembersChannel(guild);
-  if (!channel?.threads) {
-    console.warn("Ashen titles: showcase channel unavailable.");
-    return;
-  }
-
-  const sources = new Map();
-  const allThreads = new Map();
-  const addThread = thread => {
-    if (thread?.isThread?.() && thread.parentId === channel.id)
-      allThreads.set(thread.id, thread);
-  };
-  let before;
-  let rootPages = 0;
-  do {
-    const page = await channel.messages.fetch({
-      limit: 100,
-      ...(before ? { before } : {})
-    });
-    if (!page.size) break;
-
-    for (const message of page.values()) {
-      if (message.hasThread) sources.set(message.id, message);
-    }
-    before = page.last()?.id;
-    rootPages++;
-    if (!before || page.size < 100) break;
-  } while (rootPages < 10000);
-
-  const active = await channel.threads.fetchActive();
-  for (const thread of active.threads.values()) addThread(thread);
-
-  // Public archived threads are ordered newest to oldest. Discord's "before"
-  // cursor is the archive timestamp (not a message ID).
-  let cursor;
-  let archivePages = 0;
-  let archiveHasMore = false;
-  do {
-    const result = await channel.threads.fetchArchived({
-      type: "public",
-      limit: 100,
-      ...(cursor ? { before: cursor } : {})
-    });
-    for (const thread of result.threads.values()) addThread(thread);
-    archiveHasMore = result.hasMore;
-    if (!archiveHasMore) break;
-
-    const timestamps = [...result.threads.values()]
-      .map(thread => thread.archiveTimestamp)
-      .filter(Number.isFinite);
-    if (!timestamps.length)
-      throw new Error("Archived Ashen threads could not provide pagination timestamps.");
-    const oldest = Math.min(...timestamps);
-    const next = new Date(oldest - 1);
-    if (cursor && next >= cursor) throw new Error("Archived thread cursor did not advance.");
-    cursor = next;
-    archivePages++;
-  } while (archivePages < 1000);
-
-  if (archiveHasMore) throw new Error("Archived Ashen thread scan exceeded safety limit.");
-  if (rootPages >= 10000) throw new Error("Ashen post scan exceeded safety limit.");
-
-  // A thread can exist on a starter message even when an API's thread list
-  // missed it. Resolve these directly before declaring the scan complete.
-  for (const sourceId of sources.keys()) {
-    if (allThreads.has(sourceId)) continue;
-    const thread = await channel.threads.fetch(sourceId).catch(() => null);
-    addThread(thread);
-  }
-
-  let renamed = 0;
-  let unchanged = 0;
-  let failed = 0;
-  for (const thread of allThreads.values()) {
-    try {
-      let source = sources.get(thread.id);
-      if (!source) {
-        source = await channel.messages.fetch(thread.id).catch(() => null);
-      }
-      const desired = cleanAshenThreadTitle(bestAshenThreadTitle(source, thread));
-      if (!desired) {
-        failed++;
-        console.warn("Ashen titles: no safe name for thread " + thread.id);
-        continue;
-      }
-      if (thread.name === desired) {
-        unchanged++;
-        continue;
-      }
-
-      const wasArchived = thread.archived === true;
-      if (wasArchived) await thread.setArchived(false, "Repair Ashen thread name");
-      try {
-        await thread.setName(desired, "Remove emojis and misleading labels from Ashen threads");
-        renamed++;
-      } finally {
-        if (wasArchived && !thread.archived)
-          await thread.setArchived(true, "Restore Ashen thread archive state")
-            .catch(error => console.warn("Could not rearchive Ashen thread " +
-              thread.id + ": " + error.message));
-      }
-    } catch (error) {
-      failed++;
-      console.error("Ashen thread title repair " + thread.id + ": " + error.message);
-    }
-  }
-
-  if (!failed) {
-    await dbSetState(key, {
-      completed: true,
-      renamed,
-      unchanged,
-      checked: allThreads.size
-    });
-  }
-  console.log("Ashen thread title repair: " + renamed + " renamed, " +
-    unchanged + " already correct, " + failed + " failed; " +
-    allThreads.size + " total threads.");
-}
-
 async function ensureAshenMembersDiscussion(message) {
   if (!message?.guild || message.author?.bot || message.webhookId) {
     return false;
@@ -1999,7 +1747,9 @@ async function ensureAshenMembersDiscussion(message) {
   if (!message.hasThread) {
     const thread = await message
       .startThread({
-        name: safeThreadTitle(message),
+        // Discord requires an initial name to create a discussion thread.
+        // Staff can rename it manually; Vestra never changes it afterward.
+        name: "Discussion",
         autoArchiveDuration: 1440,
         reason: "Keep Ashen Members showcase discussion organized"
       })
@@ -3838,172 +3588,14 @@ async function recoverAshenMainCategories(guildOverride = null) {
 // ASHEN SIDEBAR THEME
 // =====================================================
 
+// Deliberately disabled: staff rename channels and categories manually.
+// This guard is kept for compatibility but never changes server state.
 async function applyAshenSidebarTheme(guildOverride = null) {
-  const guild = await resolveAshenGuild(guildOverride);
-  const report = {
-    guildName: guild?.name || null,
-    guildId: guild?.id || null,
+  return {
+    guildName: guildOverride?.name || null,
+    guildId: guildOverride?.id || null,
     renamed: [], removed: [], skipped: [], failed: []
   };
-  if (!guild) {
-    report.failed.push("Ashen guild unavailable");
-    return report;
-  }
-
-  await guild.channels.fetch().catch(() => {});
-  const byId = id => guild.channels.cache.get(id) || null;
-  const categoryWith = (...words) => guild.channels.cache.find(ch =>
-    ch.type === ChannelType.GuildCategory &&
-    words.some(word => ch.name.toLowerCase().includes(word.toLowerCase()))
-  ) || null;
-  const channelWith = (...words) => guild.channels.cache.find(ch =>
-    ch.type === ChannelType.GuildText &&
-    words.some(word => ch.name.toLowerCase().includes(word.toLowerCase()))
-  ) || null;
-  const voiceWith = (...words) => guild.channels.cache.find(ch =>
-    ch.type === ChannelType.GuildVoice &&
-    words.some(word => ch.name.toLowerCase().includes(word.toLowerCase()))
-  ) || null;
-
-  const rename = async (channel, name) => {
-    if (!channel) return;
-    if (channel.name === name) return report.skipped.push(name);
-    const original = channel.name;
-    try {
-      await channel.setName(name, "Ashen minimal command theme");
-      report.renamed.push(original + " -> " + name);
-    } catch (error) {
-      report.failed.push("Rename " + original + ": " + error.message);
-    }
-  };
-  const move = async (channel, parent) => {
-    if (!channel || !parent || channel.parentId === parent.id) return;
-    try {
-      // Preserve all channel-specific permission overrides.
-      await channel.setParent(parent.id, {
-        lockPermissions: false,
-        reason: "Ashen command layout"
-      });
-    } catch (error) {
-      report.failed.push("Move " + channel.name + ": " + error.message);
-    }
-  };
-
-  const entry = byId(WELCOME_CATEGORY_ID) ||
-    categoryWith("welcome to ashen", "ashen | entry");
-  const command = byId(IMPORTANT_CATEGORY_ID) ||
-    categoryWith("ashen info", "ashen | command");
-  const ops = categoryWith("sword x staff", "sword x", "sxs", "operations");
-  const commons = byId(SOCIAL_CATEGORY_ID) ||
-    categoryWith("ashen social", "ashen | commons");
-  const voice = categoryWith("ashen voice", "voice calls", "ashen | voice");
-
-  await rename(entry, "✦ ASHEN | ENTRY");
-  await rename(command, "♱ ASHEN | COMMAND");
-  await rename(ops, "⟡ SWORD X STAFF | OPERATIONS");
-  await rename(commons, "◇ ASHEN | COMMONS");
-  await rename(voice, "⌁ ASHEN | VOICE");
-
-  const names = new Map([
-    [CHANNELS.START_HERE, "✦・entry"],
-    [CHANNELS.RULES, "code"],
-    [CHANNELS.ONBOARDING, "induction"],
-    [CHANNELS.HELP, "support"],
-    [CHANNELS.STAFF_REQUESTS, "command-requests"],
-    [CHANNELS.INTRODUCTIONS, "roster"],
-    [CHANNELS.PREFERENCES, "vestra-settings"],
-    [CHANNELS.REMINDERS, "alert-history"],
-    [CHANNELS.HIGHLIGHTS, "highlights"],
-    [CHANNELS.EVENT_BOARD, "♱・war-board"],
-    [LANGUAGE_CHANNELS.english.channel, "general-en"],
-    [LANGUAGE_CHANNELS.spanish.channel, "general-es"],
-    [LANGUAGE_CHANNELS.french.channel, "general-fr"],
-    [LANGUAGE_CHANNELS.german.channel, "general-de"],
-    [LANGUAGE_CHANNELS.portuguese.channel, "general-pt"],
-    [LANGUAGE_CHANNELS.japanese.channel, "general-ja"],
-    ["1507566115994472568", "sxs-media"],
-    ["1538251460351889599", "sxs-resources"],
-    ["1542252582469247016", "general"],
-    ["1542252701578961028", "movies-shows"],
-    ["1542252734076690442", "other-games"],
-    ["1542252850808365226", "food"],
-    ["1542252884614184980", "random-topics"],
-    ["1542252909222166628", "memes"],
-    ["1542253001824272454", "media"],
-    ["1542253232464601138", "music"]
-  ]);
-  for (const [id, name] of names) await rename(byId(id), name);
-
-  const showcase = channelWith("ashen-showcase", "ashen-members");
-  const announcements = channelWith("ashen-announcements", "admin-announcements");
-  const gameAnnouncements = channelWith("sxs-announcements", "game-announcements");
-  const gameBoard = channelWith("sxs-event-board");
-  await rename(showcase, "⟡・ashen-showcase");
-  await rename(announcements, "ashen-announcements");
-  await rename(gameAnnouncements, "sxs-announcements");
-  await rename(gameBoard, "sxs-event-board");
-
-  const generalVoice = voiceWith("general");
-  const gamingVoice = voiceWith("gaming", "squad");
-  const bossVoice = voiceWith("boss grinds", "boss-grinds", "boss runs");
-  const staffVoice = voiceWith("admins", "command");
-  await rename(generalVoice, "General");
-  await rename(gamingVoice, "Squad");
-  await rename(bossVoice, "Boss Runs");
-  await rename(staffVoice, "Command");
-
-  for (const ch of [
-    byId(CHANNELS.START_HERE), byId(CHANNELS.RULES),
-    byId(CHANNELS.ONBOARDING), byId(CHANNELS.HELP),
-    byId(CHANNELS.STAFF_REQUESTS), byId(CHANNELS.INTRODUCTIONS),
-    byId(CHANNELS.PREFERENCES), showcase
-  ]) await move(ch, entry);
-
-  for (const ch of [
-    announcements, gameAnnouncements, byId(CHANNELS.REMINDERS),
-    byId(CHANNELS.HIGHLIGHTS), byId(CHANNELS.EVENT_BOARD)
-  ]) await move(ch, command);
-
-  for (const item of Object.values(LANGUAGE_CHANNELS))
-    await move(byId(item.channel), ops);
-  for (const ch of [
-    byId("1507566115994472568"),
-    byId("1538251460351889599"),
-    gameBoard
-  ]) await move(ch, ops);
-
-  for (const id of SOCIAL_CHANNELS) await move(byId(id), commons);
-  for (const ch of [generalVoice, gamingVoice, bossVoice, staffVoice])
-    await move(ch, voice);
-
-  // Remove the obsolete decorative spacer channels and empty footer
-  // categories. Never delete any category containing real channels.
-  const decorations = [...guild.channels.cache.values()].filter(ch => {
-    if (ch.type !== ChannelType.GuildText &&
-        ch.type !== ChannelType.GuildCategory) return false;
-    const title = ch.name || "";
-    return !/[A-Za-z0-9]/.test(title) &&
-      (title.startsWith("╰") || title.startsWith("━") ||
-       title.startsWith("╭") || title.startsWith("━━━━"));
-  });
-  for (const ch of decorations) {
-    if (ch.type === ChannelType.GuildCategory &&
-        guild.channels.cache.some(child => child.parentId === ch.id)) {
-      report.skipped.push("Nonempty former decorative category: " + ch.name);
-      continue;
-    }
-    try {
-      await ch.delete("Remove obsolete Ashen spacer/footer");
-      report.removed.push(ch.name);
-    } catch (error) {
-      report.failed.push("Remove " + ch.name + ": " + error.message);
-    }
-  }
-
-  console.log("Ashen command theme: " + report.renamed.length +
-    " renamed, " + report.removed.length +
-    " decorations removed, " + report.failed.length + " errors.");
-  return report;
 }
 
 // =====================================================
@@ -4299,53 +3891,11 @@ client.on(Events.MessageReactionRemove, (reaction, user) => {
 
 client.on(Events.InteractionCreate, async interaction => {
   try {
+    // Old persistent buttons can survive prior deployments. Do not rename.
     if (interaction.isButton() && interaction.customId === "admin_apply_theme") {
-      if (!isStaff(interaction.member)) {
-        return interaction.reply({
-          content: "Staff access required.",
-          flags: MessageFlags.Ephemeral
-        });
-      }
-
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-      const me = interaction.guild.members.me || await interaction.guild.members.fetchMe().catch(() => null);
-      const canManageChannels = !!me?.permissions?.has(PermissionFlagsBits.ManageChannels);
-
-      if (!canManageChannels) {
-        return interaction.editReply(
-          "❌ Vestra does not currently have **Manage Channels** in this server."
-        );
-      }
-
-      const report = await applyAshenSidebarTheme(interaction.guild);
-
-      const renamed = report.renamed.length
-        ? report.renamed.slice(0, 12).map(x => `✅ ${x}`).join("\n")
-        : "No channel names needed changing.";
-
-      const created = report.created.length
-        ? "\n\n**New spacer / bottom pieces:**\n" +
-          report.created.map(x => `✦ ${x}`).join("\n")
-        : "";
-
-      const failed = report.failed.length
-        ? "\n\n**Couldn’t change:**\n" + report.failed.slice(0, 8).map(x => `❌ ${x}`).join("\n")
-        : "";
-
-      return interaction.editReply({
-        content:
-          `# 🖤 Ashen Theme Applied\n\n` +
-          `**Server:** ${report.guildName || "Unknown"}\n` +
-          `**Server ID:** ${report.guildId || "Unknown"}\n` +
-          `**Renamed:** ${report.renamed.length}\n` +
-          `**Old decorations removed:** ${report.removed?.length || 0}\n` +
-          `**Spacer / bottom pieces created:** ${report.created.length}\n` +
-          `**Already styled:** ${report.skipped.length}\n` +
-          `**Failed:** ${report.failed.length}\n\n` +
-          renamed +
-          created +
-          failed
+      return interaction.reply({
+        content: "Automatic name changes are disabled. Ashen staff control channel names manually.",
+        flags: MessageFlags.Ephemeral
       });
     }
 
@@ -5202,9 +4752,8 @@ client.once(Events.ClientReady, async readyClient => {
     console.error("⚠️ Emergency Ashen category recovery:", error.message);
   });
 
-  await applyAshenSidebarTheme(ashenGuild).catch(error => {
-    console.error("⚠️ Ashen sidebar theme:", error.message);
-  });
+  // Channel/category names are now controlled manually by Ashen staff.
+  // Never reapply the sidebar theme or rename channels at bot startup.
 
   await enforceAshenMembersStaffOnly(ashenGuild).catch(error => {
     console.error("❌ Could not enforce staff-only showcase posting:", error);
