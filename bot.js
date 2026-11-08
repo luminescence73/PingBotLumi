@@ -850,55 +850,33 @@ function onboardingStepContent(step, title, description) {
 
 **${step}**
 
-✦ ───────────── ✦
-
 ${description}
 
-✦ ───────────── ✦
-
-*Vestra • Ashen Warriors Onboarding*`;
+*Vestra | Ashen Induction*`;
 }
 
 function onboardingSummaryEmbed(session) {
   const language = session.language ? LANGUAGES[session.language] : null;
   const reminderNames = (session.reminders || []).map(key => {
-    if (REMINDERS[key]) return `${REMINDERS[key].emoji} ${REMINDERS[key].name}`;
+    if (REMINDERS[key]) return REMINDERS[key].name;
     if (key.startsWith("tournament:")) {
       const tournament = TOURNAMENTS[key.split(":")[1]];
-      return tournament ? `${tournament.emoji} ${tournament.name}` : key;
+      return tournament ? tournament.name : key;
     }
     return key;
   });
-
   const playstyle = session.playstyle ? PLAYSTYLE[session.playstyle] : null;
   const social = session.social ? SOCIAL[session.social] : null;
 
   return brandEmbed(
-    "✨ Your Ashen Setup Is Ready",
-    "Your setup is complete. Review everything below, then step into Ashen Warriors."
-  )
-    .addFields(
-      {
-        name: "🌎 Primary Language",
-        value: language ? `${language.emoji} ${language.name}` : "Not selected",
-        inline: true
-      },
-      {
-        name: "🎮 Playstyle",
-        value: playstyle ? `${playstyle.emoji} ${playstyle.name}` : "Skipped",
-        inline: true
-      },
-      {
-        name: "💬 Social",
-        value: social ? `${social.emoji} ${social.name}` : "Skipped",
-        inline: true
-      },
-      {
-        name: "🔔 Pings",
-        value: reminderNames.length ? reminderNames.join("\n") : "🔕 No reminders"
-      }
-    )
-    .setFooter({ text: "Vestra • Your choices can be changed later in Role Preferences" });
+    "ASHEN | INDUCTION COMPLETE",
+    "Your roles and preferences are ready. Confirm your selections below."
+  ).addFields(
+    { name: "Language", value: language?.name || "Not selected", inline: true },
+    { name: "Playstyle", value: playstyle?.name || "Skipped", inline: true },
+    { name: "Social", value: social?.name || "Skipped", inline: true },
+    { name: "Alerts", value: reminderNames.join("\n") || "None" }
+  ).setFooter({ text: "Vestra | Settings can be changed anytime" });
 }
 
 function playstyleMenu(language) {
@@ -934,7 +912,7 @@ function finishButton(language) {
     new ButtonBuilder()
       .setCustomId("onboard_finish")
       .setLabel(TEXT[language].finish)
-      .setEmoji("✅")
+      
       .setStyle(ButtonStyle.Success)
   );
 }
@@ -1962,16 +1940,16 @@ async function createHelpThread(interaction, type, emoji, details) {
 
 function welcomeCard(member, languageName, playstyleName, socialName) {
   return brandEmbed(
-    "🖤 A New Ashen Warrior Has Arrived",
-    `Welcome **${member.displayName}** to Ashen Warriors!\n\n✨ **Joined the Ashen family**\nSay hi, make them feel at home, and maybe drag them into something fun.`
+    "ASHEN | NEW RECRUIT",
+    `**${member.displayName}** has completed induction and joined the ranks.`
   )
     .setThumbnail(member.user.displayAvatarURL({ size: 256 }))
     .addFields(
-      { name: "🌎 Primary Language", value: languageName, inline: true },
-      { name: "🎮 Playstyle", value: playstyleName, inline: true },
-      { name: "💬 Social Vibe", value: socialName, inline: true }
+      { name: "Language", value: languageName, inline: true },
+      { name: "Playstyle", value: playstyleName, inline: true },
+      { name: "Social", value: socialName, inline: true }
     )
-    .setFooter({ text: "Vestra • Welcome to Ashen Warriors" })
+    .setFooter({ text: "Vestra | Ashen Roster" })
     .setTimestamp();
 }
 
@@ -1979,35 +1957,32 @@ async function memberCardEmbed(member) {
   const primary = await inferPrimaryLanguage(member);
   const languageAccess = LANGUAGE_KEYS
     .filter(key => member.roles.cache.has(LANGUAGE_CHANNELS[key].role))
-    .map(key => `${LANGUAGE_CHANNELS[key].emoji} ${LANGUAGE_CHANNELS[key].name}`);
-
-  const reminderNames = Object.values(REMINDERS)
+    .map(key => LANGUAGE_CHANNELS[key].name);
+  const reminders = Object.values(REMINDERS)
     .filter(item => member.roles.cache.has(item.role))
     .map(item => item.name);
-
-  const tourneys = Object.values(TOURNAMENTS)
+  const tournaments = Object.values(TOURNAMENTS)
     .filter(item => member.roles.cache.has(item.role))
     .map(item => item.name);
-
-  const playstyle = Object.values(PLAYSTYLE).find(item => member.roles.cache.has(item.role))?.name || "Not set";
-  const social = Object.values(SOCIAL).find(item => member.roles.cache.has(item.role))?.name || "Not set";
-  const totalPings = reminderNames.length + tourneys.length;
+  const playstyle = Object.values(PLAYSTYLE)
+    .find(item => member.roles.cache.has(item.role))?.name || "Not set";
+  const social = Object.values(SOCIAL)
+    .find(item => member.roles.cache.has(item.role))?.name || "Not set";
 
   return new EmbedBuilder()
-    .setTitle(`👤 ${member.displayName}'s Vestra Card`)
-    .setDescription(
-      `${LANGUAGE_CHANNELS[primary].emoji} **${LANGUAGE_CHANNELS[primary].name}**  •  🔔 **${totalPings} pings**  •  🎮 **${playstyle}**  •  💬 **${social}**`
-    )
+    .setColor(BRAND_COLOR)
+    .setTitle(`ASHEN | ${member.displayName}`)
+    .setDescription(`${LANGUAGE_CHANNELS[primary].name} · ${playstyle} · ${social}`)
     .setThumbnail(member.user.displayAvatarURL({ size: 256 }))
     .addFields(
-      { name: "🔔 Primary Notification Language", value: `${LANGUAGE_CHANNELS[primary].emoji} ${LANGUAGE_CHANNELS[primary].name}` },
-      { name: "🌎 Language Access", value: languageAccess.join(" • ") || "None" },
-      { name: "🎮 Playstyle", value: playstyle, inline: true },
-      { name: "💬 Social", value: social, inline: true },
-      { name: "🔔 Game Pings", value: reminderNames.join(", ") || "None" },
-      { name: "🏆 Tournament Pings", value: tourneys.join(", ") || "None" }
+      { name: "Notification language", value: LANGUAGE_CHANNELS[primary].name },
+      { name: "Language access", value: languageAccess.join(", ") || "None" },
+      { name: "Playstyle", value: playstyle, inline: true },
+      { name: "Social", value: social, inline: true },
+      { name: "Guild alerts", value: reminders.join(", ") || "None" },
+      { name: "Tournament alerts", value: tournaments.join(", ") || "None" }
     )
-    .setFooter({ text: "Vestra • Your Ashen profile" });
+    .setFooter({ text: "Vestra | Ashen Profile" });
 }
 
 // =====================================================
@@ -2017,47 +1992,33 @@ async function memberCardEmbed(member) {
 function settingsHomeComponents() {
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("settings_languages").setLabel("Language Access").setEmoji("🌎").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("settings_notify").setLabel("Notification Language").setEmoji("🔔").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("settings_reminders").setLabel("Game Pings").setEmoji("⏰").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("settings_tournaments").setLabel("Tournament Pings").setEmoji("🏆").setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId("settings_languages").setLabel("Language Access").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("settings_notify").setLabel("Notification Language").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("settings_reminders").setLabel("Game Pings").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("settings_tournaments").setLabel("Tournament Pings").setStyle(ButtonStyle.Secondary)
     ),
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("settings_playstyle").setLabel("Playstyle").setEmoji("🎮").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("settings_social").setLabel("Social").setEmoji("💬").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("settings_card").setLabel("My Vestra Card").setEmoji("👤").setStyle(ButtonStyle.Success)
+      new ButtonBuilder().setCustomId("settings_playstyle").setLabel("Playstyle").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("settings_social").setLabel("Social").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("settings_card").setLabel("My Vestra Card").setStyle(ButtonStyle.Success)
     )
   ];
 }
 
 function settingsHomeEmbed() {
   return brandEmbed(
-    "✨ Customize Your Ashen Experience",
-    "This is your personal Vestra control center. Everything here changes how Ashen works **for you**."
-  )
-    .addFields(
-      {
-        name: "🌎 Language",
-        value: "Language access + your primary notification language",
-        inline: true
-      },
-      {
-        name: "🔔 Alerts",
-        value: "Guild reminders + tournament pings",
-        inline: true
-      },
-      {
-        name: "🎮 Your Vibe",
-        value: "Playstyle + social preference",
-        inline: true
-      }
-    )
-    .setFooter({ text: "Vestra • Changes save instantly" });
+    "VESTRA | SETTINGS",
+    "Manage your access, alerts, and member profile."
+  ).addFields(
+    { name: "Language", value: "Channel access and notification language", inline: true },
+    { name: "Alerts", value: "Guild and tournament subscriptions", inline: true },
+    { name: "Profile", value: "Playstyle and social preference", inline: true }
+  ).setFooter({ text: "Vestra | Changes save immediately" });
 }
 
 function backButtonRow() {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("settings_back").setLabel("Back").setEmoji("↩️").setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId("settings_back").setLabel("Back").setStyle(ButtonStyle.Secondary)
   );
 }
 
@@ -3254,13 +3215,13 @@ async function eventBoardPayload() {
       new ButtonBuilder()
         .setCustomId("settings_open")
         .setLabel("My Settings")
-        .setEmoji("✨")
+        
         .setStyle(ButtonStyle.Secondary),
 
       new ButtonBuilder()
         .setCustomId("settings_card")
         .setLabel("My Vestra Card")
-        .setEmoji("👤")
+        
         .setStyle(ButtonStyle.Secondary)
     )
   ];
@@ -3343,7 +3304,7 @@ The next voting round will open manually when the battle is ready.`
         new ButtonBuilder()
           .setCustomId("tournament_next")
           .setLabel(`Start Vote ${nextRound}`)
-          .setEmoji("🗳️")
+          
           .setStyle(ButtonStyle.Success)
       )
     );
@@ -3367,7 +3328,7 @@ When it ends, staff can close Tournament Mode and return to the normal event boa
         new ButtonBuilder()
           .setCustomId("tournament_finish")
           .setLabel("Finish Tournament")
-          .setEmoji("🏁")
+          
           .setStyle(ButtonStyle.Primary)
       )
     );
@@ -3554,10 +3515,10 @@ async function recoverAshenMainCategories(guildOverride = null) {
   // WELCOME
   let welcome =
     categoryById(WELCOME_CATEGORY_ID) ||
-    categoryByName(["WELCOME TO ASHEN"]);
+    categoryByName(["WELCOME TO ASHEN", "ASHEN | ENTRY"]);
 
   if (!welcome) {
-    welcome = await createCategory("╭━━ 𖤐 WELCOME TO ASHEN 𖤐 ━━╮");
+    welcome = await createCategory("ASHEN | ENTRY");
   }
 
   if (welcome) {
@@ -3578,7 +3539,7 @@ async function recoverAshenMainCategories(guildOverride = null) {
     const guildMembers = guild.channels.cache.find(
       ch =>
         ch.isTextBased?.() &&
-        (ch.name.includes("ashen-members") || ch.name.includes("guild-members"))
+        (ch.name.includes("ashen-showcase") || ch.name.includes("ashen-members") || ch.name.includes("guild-members"))
     ) || null;
 
     await moveKnownChannel(guildMembers, welcome);
@@ -3587,10 +3548,10 @@ async function recoverAshenMainCategories(guildOverride = null) {
   // ASHEN INFO
   let info =
     categoryById(IMPORTANT_CATEGORY_ID) ||
-    categoryByName(["ASHEN INFO"]);
+    categoryByName(["ASHEN INFO", "ASHEN | COMMAND"]);
 
   if (!info) {
-    info = await createCategory("╭━━ ✦ ASHEN INFO ✦ ━━╮");
+    info = await createCategory("ASHEN | COMMAND");
   }
 
   if (info) {
@@ -3623,7 +3584,7 @@ async function recoverAshenMainCategories(guildOverride = null) {
   let sxs = categoryByName(["SWORD X STAFF", "SWORD X", "SXS"]);
 
   if (!sxs) {
-    sxs = await createCategory("╭━━ ⚔ SWORD X STAFF ⚔ ━━╮");
+    sxs = await createCategory("SWORD X STAFF | OPERATIONS");
   }
 
   if (sxs) {
@@ -3646,10 +3607,10 @@ async function recoverAshenMainCategories(guildOverride = null) {
   // ASHEN SOCIAL
   let social =
     categoryById(SOCIAL_CATEGORY_ID) ||
-    categoryByName(["ASHEN SOCIAL"]);
+    categoryByName(["ASHEN SOCIAL", "ASHEN | COMMONS"]);
 
   if (!social) {
-    social = await createCategory("╭━━ ♡ ASHEN SOCIAL ♡ ━━╮");
+    social = await createCategory("ASHEN | COMMONS");
   }
 
   if (social) {
@@ -3661,10 +3622,10 @@ async function recoverAshenMainCategories(guildOverride = null) {
   }
 
   // ASHEN VOICE
-  let voice = categoryByName(["ASHEN VOICE", "VOICE CALLS"]);
+  let voice = categoryByName(["ASHEN VOICE", "VOICE CALLS", "ASHEN | VOICE"]);
 
   if (!voice) {
-    voice = await createCategory("╭━━ 𖤐 ASHEN VOICE 𖤐 ━━╮");
+    voice = await createCategory("ASHEN | VOICE");
   }
 
   if (voice) {
@@ -3675,9 +3636,9 @@ async function recoverAshenMainCategories(guildOverride = null) {
 
       if (
         name === "general" ||
-        name.includes("gaming") ||
-        name.includes("boss grinds") ||
-        name.includes("admins")
+        name.includes("gaming") || name.includes("squad") ||
+        name.includes("boss grinds") || name.includes("boss runs") ||
+        name.includes("admins") || name.includes("command")
       ) {
         await moveKnownChannel(channel, voice);
       }
