@@ -28,7 +28,7 @@ const BOT_NAME = "Vestra";
 const TZ = "America/Chicago";
 const GOOGLE_TRANSLATE_URL = "https://translation.googleapis.com/language/translate/v2";
 const HIGHLIGHT_REACTION_THRESHOLD = 4;
-const BRAND_COLOR = 0x6674F4;
+const BRAND_COLOR = 0x363B41;
 
 let WELCOME_CATEGORY_ID = "1540332301962182686";
 let IMPORTANT_CATEGORY_ID = "1507566069362069564";
@@ -944,90 +944,66 @@ function finishButton(language) {
 // =====================================================
 
 async function setupStartHere() {
-  const content = `# 🖤 Welcome to Ashen Warriors
+  const content = `# ASHEN WARRIORS
+**ENTRY PROTOCOL**
 
-We’re glad you’re here!
+Ashen is built on discipline, loyalty, and a strong guild. Set up your access before entering the server.
 
-Ashen is your place to **play, plan, ask for help, meet people, and stay connected** outside of Sword x Staff.
+## 01 / CODE
+Read <#${CHANNELS.RULES}>. Respect the guild, protect its members, and keep disputes out of public channels.
 
-✦ ───────────── ✦
+## 02 / INDUCTION
+Open <#${CHANNELS.ONBOARDING}> and select **Begin Induction**. Choose your language, alerts, playstyle, and social preference.
 
-# ✨ Your Path Into Ashen
+## 03 / CONFIGURATION
+Change your settings at any time in <#${CHANNELS.PREFERENCES}>.
 
-## 1. 📜 Read the Rules
-Head to <#${CHANNELS.RULES}> and take a minute to look through the server guidelines.
+## 04 / SUPPORT
+Use <#${CHANNELS.HELP}> for strategy, teams, technical help, or private staff requests.
 
-They’re simple — be respectful, use common sense, and don’t intentionally make the server uncomfortable for other people.
+## 05 / ROSTER
+After induction, Vestra introduces you in <#${CHANNELS.INTRODUCTIONS}>.
 
-## 2. 🌎 Complete Onboarding
-Go to <#${CHANNELS.ONBOARDING}> and press **🌎 Start Onboarding**.
+## COMMUNICATION
+General channels support automatic translation. In other supported channels, use the globe reaction to translate a message.
 
-You’ll set your:
-🌎 **Primary language**
-🔔 **Guild & tournament alerts**
-🎮 **Playstyle**
-💬 **Social vibe**
+## ALERTS
+You receive only the guild and tournament alerts you select.
 
-Once you finish, the rest of Ashen unlocks automatically.
-
-## 3. ✨ Customize Vestra Anytime
-Use <#${CHANNELS.PREFERENCES}> whenever you want to change your language access, notification language, reminders, tournament alerts, playstyle, or social preference.
-
-## 4. 🆘 Get Help
-Visit <#${CHANNELS.HELP}> for game help, strategies, team finding, Discord help, FAQs, or private staff support.
-
-## 5. 👋 Meet the Guild
-After onboarding, Vestra introduces you in <#${CHANNELS.INTRODUCTIONS}> with your own Ashen member card.
-
-✦ ───────────── ✦
-
-# 🌍 Language & Translation
-General language chats are automatically mirrored and translated between 🇺🇸 🇪🇸 🇫🇷 🇩🇪 🇵🇹 🇯🇵.
-
-In other supported text channels, react **🌐** to any message and Vestra will temporarily translate it into **your primary language**.
-
-# 🔔 Your Alerts, Your Choice
-Vestra only sends the alerts **you choose**, in your primary notification language — including Clash reminders and tournament notifications.
-
-# 🖤 Welcome Home
-Talk, joke around, share things, ask for help, play together, and get to know people.
-
-**Ashen Warriors is your guild too. Make yourself at home. 🖤**`;
+**Enter prepared. Stand with Ashen.**`;
 
   await upsertBotPanel(
-    CHANNELS.START_HERE,
-    "panel_start_here",
+    CHANNELS.START_HERE, "panel_start_here",
     { content, embeds: [], components: [] },
-    "# 🖤 Welcome to Ashen Warriors"
+    "# ASHEN WARRIORS"
   );
 }
 
 async function setupRulesPanel() {
-  const content = `# 🖤 Ashen Rules — The Big Picture
+  const content = `# THE ASHEN CODE
+**Standards of conduct**
 
-The full rules are posted in this channel. This is the easy version to keep in the back of your mind while you’re here.
+## RESPECT
+Treat members with respect. Banter is welcome; harassment and targeted hostility are not.
 
-## 🤝 Community
-Be cool to each other. Joking, teasing, and chaos are fine — just know when to stop, keep public drama from taking over, and try to use the right channels.
+## SECURITY
+No scams, malicious links, stolen accounts, cheats, or disclosure of private guild information.
 
-## 🛡️ Safety & Fairness
-No genuine harassment, scams, account stealing, malicious links, cheats, or intentionally leaking private guild or staff information.
+## DISCIPLINE
+Keep channels on topic, handle disputes responsibly, and follow staff direction when intervention is required.
 
-## 🎮 Guild Expectations
-Participate when you can, communicate when plans change, and remember that **real life comes first**. Nobody is expected to treat Ashen like a job.
+## DUTY
+Support the guild when you can. Communicate when plans change. Real life takes priority.
 
-# ❤️ Most Importantly
-**This is a guild, not a workplace.**
+## ACCOUNTABILITY
+Minor issues may receive a warning. Repeated or serious violations may lead to staff action.
 
-Talk, joke around, be weird, make friends, share memes, play together, and enjoy yourself.
-
-Mistakes happen. Most small issues will get a friendly reminder before anything serious happens. 🖤`;
+**Strength without discipline is nothing.**`;
 
   await upsertBotPanel(
-    CHANNELS.RULES,
-    "panel_rules_guide",
+    CHANNELS.RULES, "panel_rules_guide",
     { content, embeds: [], components: [] },
-    "# 🖤 Ashen Rules — The Big Picture"
+    "# THE ASHEN CODE"
   );
 }
 
@@ -1035,41 +1011,31 @@ async function setupOnboardingPanel() {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("start_onboarding")
-      .setLabel("Start My Ashen Setup")
-      .setEmoji("✨")
+      .setLabel("Begin Induction")
       .setStyle(ButtonStyle.Primary)
   );
 
-  const content = `# 🖤 Build Your Ashen Setup
+  const content = `# ASHEN / INDUCTION
+**Complete four steps to gain access.**
 
-Vestra will personalize the server around **you** in four quick choices.
+**01 — Language**
+Select your primary language for notifications and translation.
 
-✦ ───────────── ✦
+**02 — Alerts**
+Select guild reminders and Server/Nexus Tournament alerts.
 
-## 🌎 1 · Set Your Language
-Choose the language Vestra should use for your notifications and 🌐 translations.
+**03 — Playstyle**
+Casual, Competitive, or Both.
 
-## 🔔 2 · Choose Your Alerts
-Pick only the reminders you actually want — including guild events, **Server Tournament**, and **Nexus Tournament**.
+**04 — Social**
+Chatty, Quiet, or Either.
 
-## 🎮 3 · Pick Your Playstyle
-Choose **Casual**, **Competitive**, or **Both**.
-
-## 💬 4 · Set Your Social Vibe
-Choose **Chatty**, **Quiet**, or **Either** so people have a little idea of your vibe.
-
-✦ ───────────── ✦
-
-## ✨ Then You’re In
-Vestra saves your setup, assigns your roles, introduces you to the guild, and unlocks the rest of Ashen.
-
-**Ready to make Ashen yours? 🖤**`;
+Vestra assigns your roles and unlocks the server when induction is complete. Change your choices later in Settings.`;
 
   await upsertBotPanel(
-    CHANNELS.ONBOARDING,
-    "panel_onboarding",
+    CHANNELS.ONBOARDING, "panel_onboarding",
     { content, embeds: [], components: [row] },
-    "# 🖤 Build Your Ashen Setup"
+    "# ASHEN / INDUCTION"
   );
 }
 
