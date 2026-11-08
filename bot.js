@@ -1428,6 +1428,69 @@ function ashenPostInfoEmbed(message) {
   return embed;
 }
 
+// Only backfill clearly identifiable older showcase posts; do not create
+// unnecessary threads on old reactions, standalone compliments, or replies.
+function isLegacyAshenShowcasePost(message) {
+  if (!message || message.author?.bot || message.webhookId || message.reference?.messageId) {
+    return false;
+  }
+  if (message.attachments?.size || message.stickers?.size) return true;
+  if (message.embeds?.some(embed => embed.image || embed.video || embed.thumbnail)) {
+    return true;
+  }
+  return /https?:\/\/\S+\.(?:png|jpe?g|gif|webp|mp4|mov)(?:[?#]\S*)?/i.test(message.content || "");
+}
+
+function ashenDiscussionIntroduction(channelId) {
+  return "## 💬 Discuss This Post\n" +
+    "Share your thoughts, questions, and comments here so " +
+    "<#" + channelId + "> stays a clean showcase feed.\n\n" +
+    "*Vestra automatically creates one discussion space for every Ashen post.*";
+}
+
+// Reuse Vestra's existing discussion introduction and keep every user message
+// and reaction untouched. The embedded details belong to Vestra, not the
+// original user's message (which Discord bots cannot edit).
+async function upsertAshenDiscussionDetails(message, thread) {
+  if (!thread?.isThread?.()) throw new Error("Discussion thread is unavailable.");
+
+  const wasArchived = thread.archived === true;
+  if (wasArchived) {
+    await thread.setArchived(false, "Updating creator credits and post details");
+  }
+
+  try {
+    const recent = await thread.messages.fetch({ limit: 100 });
+    const footerTag = "Vestra • Ashen Members • " + message.id;
+    const detailsMessage = recent.find(m =>
+      m.author?.id === client.user?.id &&
+      m.embeds?.some(e => e.footer?.text === footerTag)
+    );
+    const oldIntroduction = recent.find(m =>
+      m.author?.id === client.user?.id &&
+      m.content?.startsWith("## 💬 Discuss This Post")
+    );
+    const existing = detailsMessage || oldIntroduction;
+    const data = { embeds: [ashenPostInfoEmbed(message)], allowedMentions: { parse: [] } };
+
+    if (existing) {
+      await existing.edit(data);
+      return "updated";
+    }
+
+    await thread.send({
+      content: ashenDiscussionIntroduction(message.channel.id),
+      ...data
+    });
+    return "created";
+  } finally {
+    if (wasArchived && !thread.archived) {
+      await thread.setArchived(true, "Restore original discussion archive status")
+        .catch(error => console.warn("⚠️ Could not rearchive discussion " + thread.id + ": " + error.message));
+    }
+  }
+}
+
 async function refreshAshenMembersPostInfo(message) {
   const channel = getAshenMembersChannel(message.guild);
   if (!channel || message.channel.id !== channel.id || !message.hasThread) return;
@@ -1436,16 +1499,96 @@ async function refreshAshenMembersPostInfo(message) {
     await message.guild.channels.fetch(message.id).catch(() => null);
   if (!thread?.isThread?.()) return;
 
-  const messages = await thread.messages.fetch({ limit: 100 }).catch(() => null);
-  const detailsPost = messages?.find(m =>
-    m.author?.id === client.user?.id &&
-    m.embeds?.some(e => e.footer?.text === ("Vestra • Ashen Members • " + message.id))
-  );
-  if (detailsPost) {
-    await detailsPost.edit({ embeds: [ashenPostInfoEmbed(message)] }).catch(error => {
-      console.error("❌ Could not refresh Ashen post credits:", error.message);
+  // On post edits, refresh the credit details in the existing thread.
+  await upsertAshenDiscussionDetails(message, thread).catch(error => {
+    console.error("❌ Could not refresh Ashen post credits:", error.message);
+  });
+}
+
+// Restore credits/details for older showcase posts, including posts created
+// before Vestra's automatic thread feature. Run once per server on startup.
+async function backfillLegacyAshenMembersPosts(guild) {
+  const stateKey = "ashen_members_showcase_backfill_v1";
+  if ((await dbGetState(stateKey))?.completed) return;
+
+  const channel = getAshenMembersChannel(guild);
+  if (!channel || !channel.name.includes("ashen-members")) {
+    console.warn("⚠️ Ashen showcase backfill deferred: #ashen-members not found.");
+    return;
+  }
+
+  let before;
+  let inspected = 0;
+  let createdThreads = 0;
+  let updatedThreads = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  while (true) {
+    const page = await channel.messages.fetch({
+      limit: 100,
+      ...(before ? { before } : {})
+    });
+    if (!page.size) break;
+
+    for (const message of page.values()) {
+      inspected++;
+      if (message.author?.bot || message.webhookId) {
+        skipped++;
+        continue;
+      }
+
+      // Existing threads should receive post details. Without a thread,
+      // only clear showcase media can be confidently distinguished from chat.
+      if (!message.hasThread && !isLegacyAshenShowcasePost(message)) {
+        skipped++;
+        continue;
+      }
+
+      try {
+        let thread = message.hasThread
+          ? (message.thread ||
+             await message.guild.channels.fetch(message.id).catch(() => null))
+          : null;
+
+        if (!thread && !message.hasThread) {
+          thread = await message.startThread({
+            name: safeThreadTitle(message),
+            autoArchiveDuration: 1440,
+            reason: "Backfill old Ashen showcase discussion"
+          });
+          createdThreads++;
+        }
+
+        if (!thread) throw new Error("Existing discussion thread could not be retrieved.");
+        const result = await upsertAshenDiscussionDetails(message, thread);
+        if (result === "updated") updatedThreads++;
+      } catch (error) {
+        failed++;
+        console.error("❌ Ashen showcase backfill " + message.id + ": " + error.message);
+      }
+    }
+
+    before = page.last()?.id;
+    if (!before) throw new Error("Missing pagination cursor for Ashen showcase history.");
+    if (page.size < 100) break;
+  }
+
+  // Retry on the next restart if any items failed. Previously created
+  // threads and detail messages are reused to prevent duplication.
+  if (!failed) {
+    await dbSetState(stateKey, {
+      completed: true,
+      inspected,
+      createdThreads,
+      updatedThreads,
+      skipped
     });
   }
+  console.log("✅ Ashen showcase backfill: " +
+    createdThreads + " threads created, " + updatedThreads +
+    " details updated, " + skipped + " skipped, " + failed +
+    " failed out of " + inspected + " messages inspected.");
 }
 
 async function ensureAshenMembersDiscussion(message) {
@@ -1528,15 +1671,7 @@ async function ensureAshenMembersDiscussion(message) {
       });
 
     if (thread) {
-      await thread.send({
-        content:
-          "## 💬 Discuss This Post\n" +
-          "Share your thoughts, questions, and comments here so " +
-          "<#" + showcaseChannel.id + "> stays a clean showcase feed.\n\n" +
-          "*Vestra automatically creates one discussion space for every Ashen post.*",
-        embeds: [ashenPostInfoEmbed(message)],
-        allowedMentions: { parse: [] }
-      }).catch(error => {
+      await upsertAshenDiscussionDetails(message, thread).catch(error => {
         console.error("❌ Could not send Ashen post details:", error.message);
       });
     }
@@ -5371,6 +5506,10 @@ client.once(Events.ClientReady, async readyClient => {
   // scheduled notifications are enabled so history cleanup cannot delay them.
   void migrateLegacyAlertHistory().catch(error => {
     console.error("❌ Could not complete old alert-history conversion:", error);
+  });
+
+  void backfillLegacyAshenMembersPosts(ashenGuild).catch(error => {
+    console.error("❌ Could not complete Ashen Members historical showcase backfill:", error);
   });
 
   console.log("✅ Google Cloud Translation active.");
