@@ -1367,14 +1367,86 @@ This channel is for staff handling only. Keep member requests and sensitive deta
 }
 
 function getAshenMembersChannel(guild) {
+  // Target the showcase only, not the similarly named guild directory.
   return guild?.channels?.cache?.find(
-    ch =>
-      ch.type === ChannelType.GuildText &&
-      (
-        ch.name.includes("ashen-members") ||
-        ch.name.includes("guild-members")
-      )
+    ch => ch.type === ChannelType.GuildText &&
+      ch.name.toLowerCase().includes("ashen-members")
   ) || null;
+}
+
+// Only Ashen staff may publish in the main showcase; other members may
+// view it, react, and write in its discussion threads.
+async function enforceAshenMembersStaffOnly(guild) {
+  const channel = getAshenMembersChannel(guild);
+  if (!channel) {
+    console.warn("⚠️ #ashen-members unavailable: permissions unchanged.");
+    return false;
+  }
+
+  const me = guild.members.me || await guild.members.fetchMe();
+  if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) {
+    console.error("❌ Vestra needs Manage Roles to set showcase permissions.");
+    return false;
+  }
+
+  const denyPosting = {
+    SendMessages: false,
+    CreatePublicThreads: false,
+    CreatePrivateThreads: false
+  };
+
+  await channel.permissionOverwrites.edit(guild.roles.everyone, {
+    ...denyPosting,
+    ViewChannel: true,
+    ReadMessageHistory: true,
+    AddReactions: true,
+    SendMessagesInThreads: true
+  }, { reason: "Only Ashen staff may post; members may comment in threads" });
+
+  for (const id of Object.values(STAFF_ROLES)) {
+    const role = guild.roles.cache.get(id);
+    if (!role) {
+      console.warn("⚠️ Ashen staff role missing: " + id);
+      continue;
+    }
+    await channel.permissionOverwrites.edit(role, {
+      SendMessages: true,
+      CreatePublicThreads: true,
+      SendMessagesInThreads: true
+    }, { reason: "Authorize staff showcases" });
+  }
+
+  // Remove older direct channel posting exceptions for non-staff.
+  for (const overwrite of [...channel.permissionOverwrites.cache.values()]) {
+    if (overwrite.id === guild.id ||
+        overwrite.id === me.id ||
+        Object.values(STAFF_ROLES).includes(overwrite.id)) continue;
+
+    const canPost = overwrite.allow.has(PermissionFlagsBits.SendMessages) ||
+      overwrite.allow.has(PermissionFlagsBits.CreatePublicThreads) ||
+      overwrite.allow.has(PermissionFlagsBits.CreatePrivateThreads);
+    if (!canPost) continue;
+
+    if (overwrite.type === 1) {
+      const member = await guild.members.fetch(overwrite.id).catch(() => null);
+      if (member && isStaff(member)) continue;
+    }
+    await channel.permissionOverwrites.edit(overwrite.id, denyPosting, {
+      reason: "Remove non-staff showcase posting exceptions"
+    });
+  }
+
+  // Allow Vestra to manage the channel panel and staff discussion threads.
+  await channel.permissionOverwrites.edit(me, {
+    SendMessages: true,
+    SendMessagesInThreads: true,
+    CreatePublicThreads: true,
+    ManageThreads: true,
+    ReadMessageHistory: true
+  }, { reason: "Vestra showcase management" });
+
+  console.log("✅ Ashen Members: staff-only posts, open discussion threads.");
+  return true;
 }
 
 function safeThreadTitle(message) {
@@ -1602,6 +1674,17 @@ async function ensureAshenMembersDiscussion(message) {
     return false;
   }
 
+  const member = message.member ||
+    await message.guild.members.fetch(message.author.id).catch(() => null);
+  if (!isStaff(member)) {
+    // Permissions should block this; the guard catches older exceptions.
+    console.warn("⚠️ Non-staff showcase post rejected: " + message.author.id);
+    await message.delete().catch(error =>
+      console.error("❌ Could not remove unauthorized post:", error.message)
+    );
+    return true;
+  }
+
   // If someone replies in the main feed, move the discussion into the
   // original showcase post's thread instead of letting replies pile up.
   if (message.reference?.messageId) {
@@ -1697,12 +1780,13 @@ async function setupGuildMembersPanel() {
 
   const content = `# 🖤 Ashen Members
 
-Share guild art, screenshots, event graphics, projects, achievements, memories, and anything worth showing off.
+This is Ashen Warriors' showcase for artwork, screenshots, event graphics, projects, achievements, and guild memories.
 
-## 🖼️ Keep the Feed Clean
-Post your showcase item normally in this channel. **Vestra automatically opens a discussion thread underneath every post.**
+## 🛡️ Staff-Only Posts
+**Only Ashen staff may post in this channel.** Everyone can read, react, and join discussion threads.
 
-Use that thread for comments, questions, reactions, and conversation so the main channel stays easy to browse.
+## 🖼️ Automatic Threads
+Every staff showcase post gets a discussion thread from Vestra. Keep comments and questions inside those threads.
 
 ## 🎨 Artist & Creator Credits
 When sharing someone else's art, graphics, or other creations, include **Credits to @artist** or **Art by @artist** in your caption. Vestra displays the credit in the post's discussion thread alongside its details. Credits are never assumed from the person posting.
@@ -5470,6 +5554,10 @@ client.once(Events.ClientReady, async readyClient => {
 
   await applyAshenSidebarTheme(ashenGuild).catch(error => {
     console.error("⚠️ Ashen sidebar theme:", error.message);
+  });
+
+  await enforceAshenMembersStaffOnly(ashenGuild).catch(error => {
+    console.error("❌ Could not enforce staff-only showcase posting:", error);
   });
 
   const setupTasks = [
