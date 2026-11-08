@@ -2965,50 +2965,89 @@ async function applyAshenSidebarTheme(guildOverride = null) {
     "╰━━━ ♡ ━━━╯"
   ]);
 
-  const cleanupOldDecorativeTextChannels = async () => {
-    const oldChannels = guild.channels.cache.filter(
-      ch =>
-        ch.type === ChannelType.GuildText &&
-        OLD_DECORATIVE_TEXT_NAMES.has(ch.name)
+  const isDecorativeCategoryName = name => {
+    if (!name) return false;
+    return (
+      /^╰.*╯$/u.test(name) ||
+      /^━+.*━+$/u.test(name)
     );
+  };
 
-    for (const channel of oldChannels.values()) {
+  const cleanupOldDecorativePieces = async () => {
+    const oldPieces = guild.channels.cache.filter(ch => {
+      if (ch.type === ChannelType.GuildText) {
+        return OLD_DECORATIVE_TEXT_NAMES.has(ch.name);
+      }
+
+      if (ch.type === ChannelType.GuildCategory) {
+        return isDecorativeCategoryName(ch.name);
+      }
+
+      return false;
+    });
+
+    for (const channel of oldPieces.values()) {
       try {
-        await channel.delete("Replace old # spacer channels with decorative categories");
-        console.log(`✦ Removed old decorative text channel ${channel.name}`);
+        await channel.delete("Refresh Ashen decorative sidebar pieces");
+        console.log(`✦ Removed old decorative piece ${channel.name}`);
       } catch (error) {
-        report.failed.push(`Could not remove old decorative channel ${channel.name}: ${error.message}`);
+        report.failed.push(
+          `Could not remove old decorative piece ${channel.name}: ${error.message}`
+        );
       }
     }
   };
 
-  const makeBottomBar = (topName, symbol) => {
+  const makeDecorativeBar = (topName, symbol, kind = "spacer") => {
     const targetLength = Math.max(12, Array.from(topName).length);
     const center = ` ${symbol} `;
-    const innerWidth = Math.max(8, targetLength - 2);
-    const dashCount = Math.max(4, innerWidth - Array.from(center).length);
+    const edgeChars = kind === "footer" ? 2 : 0;
+    const innerWidth = Math.max(
+      8,
+      targetLength - edgeChars
+    );
+
+    const dashCount = Math.max(
+      4,
+      innerWidth - Array.from(center).length
+    );
+
     const left = Math.ceil(dashCount / 2);
     const right = Math.floor(dashCount / 2);
 
-    return `╰${"━".repeat(left)}${center}${"━".repeat(right)}╯`;
+    if (kind === "footer") {
+      return `╰${"━".repeat(left)}${center}${"━".repeat(right)}╯`;
+    }
+
+    return `${"━".repeat(left)}${center}${"━".repeat(right)}`;
   };
 
-  const ensureDecorativeCategory = async (topCategory, topName, symbol) => {
+  const ensureDecorativeCategory = async (
+    topCategory,
+    topName,
+    symbol,
+    kind,
+    offset
+  ) => {
     if (!topCategory) {
-      report.failed.push(`Missing top category for decorative footer: ${topName}`);
+      report.failed.push(
+        `Missing top category for decorative ${kind}: ${topName}`
+      );
       return null;
     }
 
-    const footerName = makeBottomBar(topName, symbol);
+    const name = makeDecorativeBar(topName, symbol, kind);
 
-    let footer = guild.channels.cache.find(
-      ch => ch.type === ChannelType.GuildCategory && ch.name === footerName
+    let category = guild.channels.cache.find(
+      ch =>
+        ch.type === ChannelType.GuildCategory &&
+        ch.name === name
     ) || null;
 
     try {
-      if (!footer) {
-        footer = await guild.channels.create({
-          name: footerName,
+      if (!category) {
+        category = await guild.channels.create({
+          name,
           type: ChannelType.GuildCategory,
           permissionOverwrites: [
             {
@@ -3016,19 +3055,24 @@ async function applyAshenSidebarTheme(guildOverride = null) {
               allow: [PermissionFlagsBits.ViewChannel]
             }
           ],
-          reason: "Ashen black-and-white category footer"
+          reason: `Ashen decorative ${kind} category`
         });
 
-        report.created.push(footerName);
-        console.log(`✦ Created decorative category ${footerName}`);
+        report.created.push(name);
+        console.log(`✦ Created decorative ${kind} category ${name}`);
       } else {
-        report.skipped.push(footerName);
+        report.skipped.push(name);
       }
 
-      await footer.setPosition(topCategory.position + 1).catch(() => {});
-      return footer;
+      await category
+        .setPosition(topCategory.position + offset)
+        .catch(() => {});
+
+      return category;
     } catch (error) {
-      const detail = `Decorative category ${footerName}: ${error.message}`;
+      const detail =
+        `Decorative ${kind} category ${name}: ${error.message}`;
+
       report.failed.push(detail);
       console.error("⚠️ Decorative category failed:", detail);
       return null;
@@ -3134,10 +3178,10 @@ async function applyAshenSidebarTheme(guildOverride = null) {
   await renameChildByCurrentName(voiceCategory, ["admins"], "◇・Admins");
 
   // -------------------------------------------------
-  // DECORATIVE CATEGORY FOOTERS
+  // DECORATIVE CATEGORY SPACERS + FOOTERS
   // -------------------------------------------------
 
-  await cleanupOldDecorativeTextChannels();
+  await cleanupOldDecorativePieces();
 
   const categoryFrames = [
     [welcomeCategory, "╭━━ 𖤐 WELCOME TO ASHEN 𖤐 ━━╮", "🖤"],
@@ -3148,7 +3192,21 @@ async function applyAshenSidebarTheme(guildOverride = null) {
   ];
 
   for (const [category, topName, symbol] of categoryFrames) {
-    await ensureDecorativeCategory(category, topName, symbol);
+    await ensureDecorativeCategory(
+      category,
+      topName,
+      symbol,
+      "spacer",
+      1
+    );
+
+    await ensureDecorativeCategory(
+      category,
+      topName,
+      symbol,
+      "footer",
+      2
+    );
   }
 
   console.log(
@@ -3472,7 +3530,7 @@ client.on(Events.InteractionCreate, async interaction => {
         : "No channel names needed changing.";
 
       const created = report.created.length
-        ? "\n\n**New decorative category footers:**\n" +
+        ? "\n\n**New decorative categories:**\n" +
           report.created.map(x => `✦ ${x}`).join("\n")
         : "";
 
