@@ -2702,7 +2702,7 @@ async function startTournamentEvent(tournamentKey, announcementText, label) {
     tournament.role,
     announcementText,
     label,
-    { mentionRole: tournamentKey === "nexus" }
+    { mentionRole: true }
   );
 
   await updateEventBoard();
@@ -2719,7 +2719,7 @@ async function startTournamentVote(tournamentKey, round, pingMembers = true) {
       tournament.role,
       `🗳️ ${tournament.name} Round ${round} voting is OPEN! You have ${tournament.voteMinutes} minutes to vote.`,
       `${tournament.name} — Round ${round} Voting Open`,
-      { mentionRole: tournamentKey === "nexus" }
+      { mentionRole: true }
     );
   }
 
