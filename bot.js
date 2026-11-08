@@ -2471,7 +2471,7 @@ function countdownText(relativeMinutes) {
   return `${Math.max(minutes, 0)}m`;
 }
 
-function eventBoardDefaultEmbed() {
+function eventBoardDefaultEmbeds() {
   const events = upcomingEvents(6);
   const next = events[0];
   const future = events.slice(1);
@@ -2486,47 +2486,52 @@ function eventBoardDefaultEmbed() {
     ? "Summer / DST schedule"
     : "Winter / Standard schedule";
 
-  const embed = new EmbedBuilder()
+  const nextEmbed = new EmbedBuilder()
     .setColor(BRAND_COLOR)
     .setAuthor({
       name: "🖤 ASHEN LIVE EVENT BOARD"
     })
-    .setTitle(
-      next
-        ? `⏳ NEXT EVENT • ${next.label.toUpperCase()}`
-        : "⏳ NEXT EVENT"
-    )
+    .setTitle("⏳ NEXT EVENT")
     .setDescription(
       next
-        ? `**${eventDayLabel(next)} • ${format12Hour(next.hour, next.minute)}**
-Starts in **${countdownText(next.relativeMinutes)}**`
-        : "No upcoming events found."
-    );
+        ? `# ${next.label.toUpperCase()}
 
-  if (future.length) {
-    embed.addFields({
-      name: "📅 COMING UP",
-      value: future
-        .map(
-          event =>
-            `**${event.label}**
-${eventDayLabel(event)} • ${format12Hour(event.hour, event.minute)} • ${countdownText(event.relativeMinutes)}`
-        )
-        .join("\n\n")
-    });
-  }
+## ${eventDayLabel(next)} • ${format12Hour(next.hour, next.minute)}
 
-  embed
+# ⏱️ ${countdownText(next.relativeMinutes)} LEFT
+
+**This is the very next scheduled Ashen event.**`
+        : "# No upcoming events found."
+    )
+    .setFooter({
+      text: "Vestra • Live Event Board • Next Event"
+    })
+    .setTimestamp();
+
+  const followingEmbed = new EmbedBuilder()
+    .setColor(BRAND_COLOR)
+    .setTitle("📅 FOLLOWING EVENTS")
+    .setDescription(
+      future.length
+        ? future
+            .map(
+              event =>
+                `**${event.label}**
+${eventDayLabel(event)} • ${format12Hour(event.hour, event.minute)}
+⏳ ${countdownText(event.relativeMinutes)}`
+            )
+            .join("\n\n")
+        : "Nothing else is currently scheduled."
+    )
     .addFields({
       name: "🕒 CURRENT GAME SCHEDULE",
       value: mode
     })
     .setFooter({
-      text: "Vestra • Live Event Board • Updates automatically"
-    })
-    .setTimestamp();
+      text: "Vestra • Live Event Board • Coming Up"
+    });
 
-  return embed;
+  return [nextEmbed, followingEmbed];
 }
 
 async function eventBoardPayload() {
@@ -2550,7 +2555,7 @@ async function eventBoardPayload() {
 
   if (!state) {
     return {
-      embeds: [eventBoardDefaultEmbed()],
+      embeds: eventBoardDefaultEmbeds(),
       components: rows
     };
   }
