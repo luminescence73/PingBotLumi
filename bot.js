@@ -558,8 +558,7 @@ function brandEmbed(title, description = "") {
 async function findWelcomeChannelByName(guild, name) {
   return guild.channels.cache.find(
     channel =>
-      channel.parentId === WELCOME_CATEGORY_ID &&
-      channel.isTextBased() &&
+      channel.isTextBased?.() &&
       channel.name === name
   ) || null;
 }
@@ -1373,7 +1372,6 @@ async function setupGuildMembersPanel() {
 
   const channel = guild.channels.cache.find(
     ch =>
-      ch.parentId === WELCOME_CATEGORY_ID &&
       ch.isTextBased?.() &&
       (ch.name.includes("guild-members") || ch.name.includes("ashen-members"))
   ) || null;
@@ -3631,9 +3629,32 @@ async function applyAshenSidebarTheme(guildOverride = null) {
   );
 
   // VOICE
-  const voiceSeparator = await createDecorationCategory(
-    "━━━━ 𖤐 ━━━━"
-  );
+  const voiceSecondaryChannels = [
+    bossVoice,
+    adminsVoice
+  ].filter(Boolean);
+
+  let voiceSeparator = null;
+
+  if (voiceSecondaryChannels.length) {
+    voiceSeparator = await createDecorationCategory(
+      "━━━━ 𖤐 ━━━━"
+    );
+
+    for (const channel of voiceSecondaryChannels) {
+      await moveChannel(
+        channel,
+        voiceSeparator
+      );
+    }
+
+    await placeAfter(
+      voiceSeparator,
+      voiceCategory,
+      1
+    );
+  }
+
   const voiceFooter = await createDecorationCategory(
     makeFooterName(
       "╭━━ 𖤐 ASHEN VOICE 𖤐 ━━╮",
@@ -3641,23 +3662,9 @@ async function applyAshenSidebarTheme(guildOverride = null) {
     )
   );
 
-  await moveChannel(
-    bossVoice,
-    voiceSeparator
-  );
-  await moveChannel(
-    adminsVoice,
-    voiceSeparator
-  );
-
-  await placeAfter(
-    voiceSeparator,
-    voiceCategory,
-    1
-  );
   await placeAfter(
     voiceFooter,
-    voiceSeparator,
+    voiceSeparator || voiceCategory,
     1
   );
 
