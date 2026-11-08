@@ -1366,15 +1366,144 @@ This channel is for staff handling only. Keep member requests and sensitive deta
   );
 }
 
+function getAshenMembersChannel(guild) {
+  return guild?.channels?.cache?.find(
+    ch =>
+      ch.type === ChannelType.GuildText &&
+      (
+        ch.name.includes("ashen-members") ||
+        ch.name.includes("guild-members")
+      )
+  ) || null;
+}
+
+function safeThreadTitle(message) {
+  const firstLine = (message.content || "")
+    .split("\n")
+    .map(x => x.trim())
+    .find(Boolean);
+
+  const authorName =
+    message.member?.displayName ||
+    message.author?.globalName ||
+    message.author?.username ||
+    "Ashen Member";
+
+  const base = firstLine
+    ? firstLine
+        .replace(/https?:\/\/\S+/gi, "")
+        .replace(/[^\p{L}\p{N}\s'’!?.&-]/gu, "")
+        .trim()
+    : "";
+
+  if (base.length >= 3) {
+    return base.slice(0, 80);
+  }
+
+  return `🖤 ${authorName}'s post`.slice(0, 80);
+}
+
+async function ensureAshenMembersDiscussion(message) {
+  if (!message?.guild || message.author?.bot || message.webhookId) {
+    return false;
+  }
+
+  const showcaseChannel = getAshenMembersChannel(message.guild);
+
+  if (!showcaseChannel || message.channel.id !== showcaseChannel.id) {
+    return false;
+  }
+
+  // If someone replies in the main feed, move the discussion into the
+  // original showcase post's thread instead of letting replies pile up.
+  if (message.reference?.messageId) {
+    const sourceMessage = await showcaseChannel.messages
+      .fetch(message.reference.messageId)
+      .catch(() => null);
+
+    if (sourceMessage?.hasThread && sourceMessage.thread) {
+      const attachmentText = [...message.attachments.values()]
+        .map(attachment => attachment.url)
+        .join("\n");
+
+      const movedText = [
+        `**<@${message.author.id}> replied:**`,
+        message.content || "",
+        attachmentText
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      await sourceMessage.thread
+        .send({
+          content: movedText,
+          allowedMentions: {
+            users: [message.author.id]
+          }
+        })
+        .catch(() => null);
+
+      await message.delete().catch(() => {});
+
+      const notice = await showcaseChannel
+        .send({
+          content:
+            `💬 <@${message.author.id}>, I moved your reply into ` +
+            `<#${sourceMessage.thread.id}> so **Ashen Members** stays clean.`,
+          allowedMentions: {
+            users: [message.author.id]
+          }
+        })
+        .catch(() => null);
+
+      if (notice) {
+        setTimeout(() => {
+          void notice.delete().catch(() => {});
+        }, 8_000);
+      }
+
+      return true;
+    }
+  }
+
+  // Every top-level showcase post gets one discussion thread.
+  if (!message.hasThread) {
+    const thread = await message
+      .startThread({
+        name: safeThreadTitle(message),
+        autoArchiveDuration: 1440,
+        reason: "Keep Ashen Members showcase discussion organized"
+      })
+      .catch(error => {
+        console.error(
+          "❌ Could not create Ashen Members discussion thread:",
+          error.message
+        );
+        return null;
+      });
+
+    if (thread) {
+      await thread
+        .send({
+          content:
+            "## 💬 Discuss This Post\n" +
+            "Talk, react, ask questions, or share thoughts **here** so " +
+            "<#"+showcaseChannel.id+"> stays a clean showcase feed.\n\n" +
+            "*Vestra automatically creates one discussion space for every Ashen post.*",
+          allowedMentions: { parse: [] }
+        })
+        .catch(() => {});
+    }
+  }
+
+  return true;
+}
+
 async function setupGuildMembersPanel() {
   const guild = getGuild();
   if (!guild) return;
 
-  const channel = guild.channels.cache.find(
-    ch =>
-      ch.isTextBased?.() &&
-      (ch.name.includes("guild-members") || ch.name.includes("ashen-members"))
-  ) || null;
+  const channel = getAshenMembersChannel(guild);
   if (!channel) return;
 
   await guild.members.fetch().catch(() => {});
@@ -1385,9 +1514,14 @@ async function setupGuildMembersPanel() {
     member => member.roles.cache.has(ONBOARDING_COMPLETE)
   ).size;
 
-  const content = `# 🖤 Ashen Guild Members
+  const content = `# 🖤 Ashen Members
 
-A little snapshot of the community that makes Ashen Warriors what it is.
+Share guild art, screenshots, event graphics, projects, achievements, memories, and anything worth showing off.
+
+## 🖼️ Keep the Feed Clean
+Post your showcase item normally in this channel. **Vestra automatically opens a discussion thread underneath every post.**
+
+Use that thread for comments, questions, reactions, and conversation so the main channel stays easy to browse.
 
 ## 👥 Our Community
 **${humanMembers.size}** members
@@ -1395,7 +1529,7 @@ A little snapshot of the community that makes Ashen Warriors what it is.
 **${onboardedCount}** members fully onboarded
 
 ## ✨ Your Vestra Card
-Want to see your own setup? Your card shows your language access, primary notification language, pings, playstyle, and social preference.
+Your card shows your language access, notification language, pings, playstyle, and social preference.
 
 Press the button below anytime to view it.`;
 
@@ -1411,7 +1545,7 @@ Press the button below anytime to view it.`;
     channel,
     "panel_guild_members",
     { content, embeds: [], components: [row] },
-    "# 🖤 Ashen Guild Members"
+    "# 🖤 Ashen Members"
   );
 }
 
@@ -4040,6 +4174,10 @@ async function reactionRole(reaction, user, adding) {
 client.on(Events.MessageCreate, async message => {
   try {
     if (!message.guild || message.author.bot || message.webhookId) return;
+
+    if (await ensureAshenMembersDiscussion(message)) {
+      return;
+    }
 
     if (languageByChannel(message.channel.id)) {
       await handleGeneralMessageCreate(message);
