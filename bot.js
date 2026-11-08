@@ -3741,7 +3741,7 @@ async function applyAshenSidebarTheme(guildOverride = null) {
   ]);
   for (const [id, name] of names) await rename(byId(id), name);
 
-  const showcase = channelWith("ashen-showcase", "ashen-members", "guild-members");
+  const showcase = channelWith("ashen-showcase", "ashen-members");
   const announcements = channelWith("ashen-announcements", "admin-announcements");
   const gameAnnouncements = channelWith("sxs-announcements", "game-announcements");
   const gameBoard = channelWith("sxs-event-board");
