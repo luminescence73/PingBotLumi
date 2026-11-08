@@ -1337,7 +1337,12 @@ async function setupGuildMembersPanel() {
   const guild = getGuild();
   if (!guild) return;
 
-  const channel = await findWelcomeChannelByName(guild, "guild-members");
+  const channel = guild.channels.cache.find(
+    ch =>
+      ch.parentId === WELCOME_CATEGORY_ID &&
+      ch.isTextBased?.() &&
+      (ch.name.includes("guild-members") || ch.name.includes("ashen-members"))
+  ) || null;
   if (!channel) return;
 
   await guild.members.fetch().catch(() => {});
@@ -2865,6 +2870,126 @@ function startScheduler() {
 }
 
 // =====================================================
+// ASHEN SIDEBAR THEME
+// =====================================================
+
+async function applyAshenSidebarTheme() {
+  const guild = getGuild();
+  if (!guild) return;
+
+  await guild.channels.fetch().catch(() => {});
+
+  const renameChannel = async (channel, desiredName) => {
+    if (!channel || channel.name === desiredName) return;
+    const oldName = channel.name;
+    try {
+      await channel.edit({
+        name: desiredName,
+        reason: "Ashen black-and-white celestial sidebar theme"
+      });
+      console.log(`✦ Renamed ${oldName} → ${desiredName}`);
+    } catch (error) {
+      console.error(`⚠️ Could not rename ${oldName} → ${desiredName}:`, error.message);
+    }
+  };
+
+  const byId = id => guild.channels.cache.get(id) || null;
+
+  const findCategory = (...needles) =>
+    guild.channels.cache.find(channel => {
+      if (channel.type !== 4) return false;
+      const name = channel.name.toUpperCase();
+      return needles.some(needle => name.includes(needle.toUpperCase()));
+    }) || null;
+
+  const welcomeCategory = byId(WELCOME_CATEGORY_ID);
+  const infoCategory = byId(IMPORTANT_CATEGORY_ID);
+  const socialCategory = byId(SOCIAL_CATEGORY_ID);
+  const sxsCategory = findCategory("SWORD X STAFF", "SWORD X", "SXS");
+  const voiceCategory = findCategory("ASHEN VOICE", "VOICE CALLS");
+
+  await renameChannel(welcomeCategory, "╭━━ 𖤐 WELCOME TO ASHEN 𖤐 ━━╮");
+  await renameChannel(infoCategory, "╭━━ ✦ ASHEN INFO ✦ ━━╮");
+  await renameChannel(sxsCategory, "╭━━ ⚔ SWORD X STAFF ⚔ ━━╮");
+  await renameChannel(socialCategory, "╭━━ ♡ ASHEN SOCIAL ♡ ━━╮");
+  await renameChannel(voiceCategory, "╭━━ 𖤐 ASHEN VOICE 𖤐 ━━╮");
+
+  const directRenames = new Map([
+    [CHANNELS.START_HERE, "⌂・start-here"],
+    [CHANNELS.RULES, "♱・rules"],
+    [CHANNELS.ONBOARDING, "✦・onboarding"],
+    [CHANNELS.HELP, "♡・help-desk"],
+    [CHANNELS.STAFF_REQUESTS, "⚔・staff-requests"],
+    [CHANNELS.INTRODUCTIONS, "𖤐・introductions"],
+    [CHANNELS.PREFERENCES, "◇・vestra-settings"],
+    [CHANNELS.REMINDERS, "⌁・alert-history"],
+    [CHANNELS.HIGHLIGHTS, "𖤐・community-highlights"],
+    [CHANNELS.EVENT_BOARD, "◷・live-event-board"],
+    [LANGUAGE_CHANNELS.english.channel, "◈・general-en"],
+    [LANGUAGE_CHANNELS.spanish.channel, "◈・general-es"],
+    [LANGUAGE_CHANNELS.french.channel, "◈・general-fr"],
+    [LANGUAGE_CHANNELS.german.channel, "◈・general-de"],
+    [LANGUAGE_CHANNELS.portuguese.channel, "◈・general-pt"],
+    [LANGUAGE_CHANNELS.japanese.channel, "◈・general-ja"],
+    ["1507566115994472568", "▣・sxs-media"],
+    ["1538251460351889599", "▤・sxs-resources"],
+    ["1542252582469247016", "☾・general"],
+    ["1542252701578961028", "◇・movies-and-shows"],
+    ["1542252734076690442", "♟・other-games"],
+    ["1542252850808365226", "♢・food"],
+    ["1542252884614184980", "⋆・random-topics"],
+    ["1542252909222166628", "☠・memes"],
+    ["1542253001824272454", "▣・media"],
+    ["1542253232464601138", "♫・music"]
+  ]);
+
+  for (const [id, desiredName] of directRenames) {
+    await renameChannel(byId(id), desiredName);
+  }
+
+  const renameChildByCurrentName = async (parent, possibleNames, desiredName) => {
+    if (!parent) return;
+    const channel = guild.channels.cache.find(ch => {
+      if (ch.parentId !== parent.id) return false;
+      const name = ch.name.toLowerCase();
+      return possibleNames.some(candidate => name.includes(candidate.toLowerCase()));
+    }) || null;
+    await renameChannel(channel, desiredName);
+  };
+
+  await renameChildByCurrentName(
+    welcomeCategory,
+    ["guild-members", "ashen-members"],
+    "♟・ashen-members"
+  );
+
+  await renameChildByCurrentName(
+    infoCategory,
+    ["admin-announcements", "ashen-announcements"],
+    "♱・ashen-announcements"
+  );
+
+  await renameChildByCurrentName(
+    infoCategory,
+    ["game-announcements", "sxs-announcements"],
+    "⚔・sxs-announcements"
+  );
+
+  await renameChildByCurrentName(
+    sxsCategory,
+    ["event-board", "sxs-event-board"],
+    "◷・sxs-event-board"
+  );
+
+  await renameChildByCurrentName(voiceCategory, ["general"], "◌・General");
+  await renameChildByCurrentName(voiceCategory, ["gaming"], "⚔・Gaming");
+  await renameChildByCurrentName(voiceCategory, ["boss grinds", "boss-grinds"], "♱・Boss Grinds");
+  await renameChildByCurrentName(voiceCategory, ["admins"], "◇・Admins");
+
+  console.log("🖤 Ashen black-and-white celestial sidebar theme applied.");
+}
+
+// =====================================================
 // PERMISSION CHECKS
 // =====================================================
 
@@ -3950,6 +4075,10 @@ client.once(Events.ClientReady, async readyClient => {
 
   await cleanupLegacyWelcomePanels().catch(error => {
     console.error("⚠️ Legacy panel cleanup:", error.message);
+  });
+
+  await applyAshenSidebarTheme().catch(error => {
+    console.error("⚠️ Ashen sidebar theme:", error.message);
   });
 
   const setupTasks = [
