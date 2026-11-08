@@ -3243,7 +3243,7 @@ async function applyAshenSidebarTheme(guildOverride = null) {
 
   const isApprovedSpacerChannel = channel =>
     channel.type === ChannelType.GuildText &&
-    channel.name.endsWith("＃") &&
+    (channel.name.endsWith("#") || channel.name.endsWith("＃")) &&
     dashCount(channel.name) >= 3;
 
   const isOldDecorativePiece = channel => {
@@ -3503,44 +3503,145 @@ async function applyAshenSidebarTheme(guildOverride = null) {
     }
   };
 
+  const makeSpacerName = (topName, symbol, endingHash = "#") => {
+    // The category title/footer has no Discord channel icon.
+    // Subtract two visual character slots so the built-in left # plus
+    // the channel name lands at roughly the same overall width.
+    const targetNameLength = Math.max(
+      12,
+      Array.from(topName).length - 2
+    );
+
+    const center = ` ${symbol} `;
+    const suffix = ` ${endingHash}`;
+
+    const dashCountForSpacer = Math.max(
+      6,
+      targetNameLength -
+        Array.from(center).length -
+        Array.from(suffix).length
+    );
+
+    const left = Math.ceil(dashCountForSpacer / 2);
+    const right = Math.floor(dashCountForSpacer / 2);
+
+    return (
+      `${"━".repeat(left)}` +
+      center +
+      `${"━".repeat(right)}` +
+      suffix
+    );
+  };
+
   const ensureSpacerChannel = async (
     parentCategory,
-    name,
+    topName,
+    symbol,
     anchorChannel
   ) => {
     if (!parentCategory) return null;
 
-    let spacer = guild.channels.cache.find(
+    const preferredName = makeSpacerName(
+      topName,
+      symbol,
+      "#"
+    );
+
+    const fallbackName = makeSpacerName(
+      topName,
+      symbol,
+      "＃"
+    );
+
+    const existingSpacers = guild.channels.cache.filter(
       ch =>
         ch.type === ChannelType.GuildText &&
         ch.parentId === parentCategory.id &&
-        ch.name === name
-    ) || null;
+        isApprovedSpacerChannel(ch)
+    );
+
+    let spacer = existingSpacers.first() || null;
+
+    // Remove accidental duplicate approved spacer channels in this section.
+    for (const extra of existingSpacers.values()) {
+      if (!spacer || extra.id === spacer.id) continue;
+
+      await extra
+        .delete("Remove duplicate Ashen spacer")
+        .catch(() => {});
+    }
 
     try {
       if (!spacer) {
-        spacer = await guild.channels.create({
-          name,
-          type: ChannelType.GuildText,
-          parent: parentCategory.id,
-          permissionOverwrites: [
-            {
-              id: guild.roles.everyone.id,
-              deny: [
-                PermissionFlagsBits.SendMessages,
-                PermissionFlagsBits.AddReactions,
-                PermissionFlagsBits.CreatePublicThreads,
-                PermissionFlagsBits.CreatePrivateThreads,
-                PermissionFlagsBits.SendMessagesInThreads
-              ]
-            }
-          ],
-          reason: "Ashen decorative locked spacer"
-        });
+        try {
+          spacer = await guild.channels.create({
+            name: preferredName,
+            type: ChannelType.GuildText,
+            parent: parentCategory.id,
+            permissionOverwrites: [
+              {
+                id: guild.roles.everyone.id,
+                deny: [
+                  PermissionFlagsBits.SendMessages,
+                  PermissionFlagsBits.AddReactions,
+                  PermissionFlagsBits.CreatePublicThreads,
+                  PermissionFlagsBits.CreatePrivateThreads,
+                  PermissionFlagsBits.SendMessagesInThreads
+                ]
+              }
+            ],
+            reason: "Ashen decorative locked spacer"
+          });
+        } catch {
+          spacer = await guild.channels.create({
+            name: fallbackName,
+            type: ChannelType.GuildText,
+            parent: parentCategory.id,
+            permissionOverwrites: [
+              {
+                id: guild.roles.everyone.id,
+                deny: [
+                  PermissionFlagsBits.SendMessages,
+                  PermissionFlagsBits.AddReactions,
+                  PermissionFlagsBits.CreatePublicThreads,
+                  PermissionFlagsBits.CreatePrivateThreads,
+                  PermissionFlagsBits.SendMessagesInThreads
+                ]
+              }
+            ],
+            reason: "Ashen decorative locked spacer"
+          });
+        }
 
-        report.created.push(name);
+        report.created.push(spacer.name);
       } else {
-        report.skipped.push(name);
+        let renamed = false;
+
+        if (spacer.name !== preferredName) {
+          try {
+            await spacer.edit({
+              name: preferredName,
+              reason: "Resize Ashen spacer to match category frame"
+            });
+            renamed = true;
+          } catch {
+            if (spacer.name !== fallbackName) {
+              await spacer.edit({
+                name: fallbackName,
+                reason: "Resize Ashen spacer to match category frame"
+              }).catch(() => {});
+              renamed = true;
+            }
+          }
+        }
+
+        if (renamed) {
+          report.renamed.push(
+            `Spacer → ${spacer.name}`
+          );
+        } else {
+          report.skipped.push(spacer.name);
+        }
       }
 
       if (
@@ -3556,7 +3657,7 @@ async function applyAshenSidebarTheme(guildOverride = null) {
       return spacer;
     } catch (error) {
       report.failed.push(
-        `Could not create spacer ${name}: ${error.message}`
+        `Could not create/resize spacer: ${error.message}`
       );
       return null;
     }
@@ -3657,28 +3758,32 @@ async function applyAshenSidebarTheme(guildOverride = null) {
   // Welcome: after introductions.
   await ensureSpacerChannel(
     welcomeCategory,
-    "━━━━ 𖤐 ━━━━ ＃",
+    "╭━━ 𖤐 WELCOME TO ASHEN 𖤐 ━━╮",
+    "𖤐",
     byId(CHANNELS.INTRODUCTIONS)
   );
 
   // Info: after the two announcement channels.
   await ensureSpacerChannel(
     infoCategory,
-    "━━━━ ✦ ━━━━ ＃",
+    "╭━━ ✦ ASHEN INFO ✦ ━━╮",
+    "✦",
     sxsAnnouncements || adminAnnouncements
   );
 
   // Sword x Staff: after the six language chats, before media/resources.
   await ensureSpacerChannel(
     sxsCategory,
-    "━━━━ ⚔ ━━━━ ＃",
+    "╭━━ ⚔ SWORD X STAFF ⚔ ━━╮",
+    "⚔",
     byId(LANGUAGE_CHANNELS.japanese.channel)
   );
 
   // Voice: after Gaming, before Boss Grinds / Admins / AFK.
   await ensureSpacerChannel(
     voiceCategory,
-    "━━━━ 𖤐 ━━━━ ＃",
+    "╭━━ 𖤐 ASHEN VOICE 𖤐 ━━╮",
+    "𖤐",
     gamingVoice || generalVoice
   );
 
