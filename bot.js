@@ -1292,47 +1292,114 @@ async function enforceAshenMembersStaffOnly(guild) {
   return true;
 }
 
-function ashenCaptionTitle(message) {
-  const raw = (message.content || "").trim();
-  const first = raw.split("\n")
-    .map(x => x.trim())
-    .filter(Boolean)
-    .find(x => !/^(?:credits?(?:\s+to|\s+by)?|art(?:work)? by|illustration by|created by|made by|artist)\b/i.test(x));
-  if (!first) return "";
-  return first
-    .replace(/https?:\/\/\S+/gi, "")
-    .replace(/\b(?:credits?(?:\s+to|\s+by)?|art(?:work)? by|illustration by|created by|made by)\b.*$/i, "")
-    .replace(/[^\p{L}\p{N}\s'’!?.&-]/gu, "")
+// Thread titles never contain emoji, decorative icons, or auto-tag lists.
+function cleanAshenThreadTitle(value) {
+  return String(value || "")
+    .replace(/<a?:[A-Za-z0-9_]+:\d+>/g, " ")
+    .replace(/[\p{Extended_Pictographic}\uFE0E\uFE0F\u200D\u20E3]/gu, " ")
+    .replace(/[•·|]+/gu, " — ")
     .replace(/\s+/g, " ")
+    .replace(/^[\s—\-.,:;]+|[\s—\-.,:;]+$/gu, "")
     .trim()
     .slice(0, 78);
 }
 
+const ASHEN_GENERIC_IMAGE_TAGS = new Set([
+  "animation", "anime", "manga", "animated cartoon", "cartoon",
+  "art", "artwork", "illustration", "digital art", "visual arts",
+  "drawing", "graphic design", "design", "graphic", "graphics",
+  "poster", "media", "picture", "image", "photo", "photography",
+  "screenshot", "screen shot", "computer wallpaper", "wallpaper",
+  "fictional character", "character", "fiction", "2d animation",
+  "3d animation", "person", "human", "girl", "boy", "woman", "man",
+  "face", "portrait", "hair", "black hair", "blue hair", "long hair",
+  "smile", "cartoon character", "figurine", "toy", "visual effect",
+  "showcase", "photo shoot", "game", "video game", "fantasy"
+]);
+
+function isGenericAshenThreadTitle(name) {
+  const title = cleanAshenThreadTitle(name).toLowerCase();
+  if (!title || title.length < 3) return true;
+  if (/^(?:img|dsc|screenshot|image|photo|scan)[\s_\-]*\d{2,}$/i.test(title)) return true;
+  if (/^(?:ash(en)? members?|unnamed|untitled|new thread)$/i.test(title)) return true;
+  if (/^(?:artwork|showcase)\s*[—-]\s*.+$/i.test(title)) return false;
+  const pieces = title.split(/\s*(?:—|\/|,)\s*/u).filter(Boolean);
+  return pieces.length > 0 && pieces.every(p => ASHEN_GENERIC_IMAGE_TAGS.has(p));
+}
+
+function ashenCaptionTitle(message) {
+  const raw = (message?.content || "").trim();
+  const first = raw.split("\n").map(x => x.trim())
+    .filter(Boolean)
+    .find(x => !/^(?:credits?(?:\s+to|\s+by)?|art(?:work)? by|illustration by|created by|made by|artist)\b/i.test(x));
+  if (!first) return "";
+  const cleaned = cleanAshenThreadTitle(first
+    .replace(/https?:\/\/\S+/gi, "")
+    .replace(/\b(?:credits?(?:\s+to|\s+by)?|art(?:work)? by|illustration by|created by|made by)\b.*$/i, "")
+  );
+  return isGenericAshenThreadTitle(cleaned) ? "" : cleaned;
+}
+
+function ashenPosterName(message, thread = null) {
+  const author = message?.member?.displayName ||
+    message?.author?.globalName || message?.author?.username ||
+    thread?.ownerId && message?.guild?.members?.cache?.get(thread.ownerId)?.displayName ||
+    "Ashen";
+  return cleanAshenThreadTitle(author) || "Ashen";
+}
+
+function ashenHasImage(message) {
+  return !!(message?.attachments?.some(a => a.contentType?.startsWith("image/") ||
+      /\.(?:png|jpe?g|gif|webp)$/i.test(a.name || "")) ||
+    message?.embeds?.some(e => e.image?.url || e.thumbnail?.url) ||
+    /https?:\/\/\S+\.(?:png|jpe?g|gif|webp)(?:[?#]\S*)?/i.test(message?.content || ""));
+}
+
 function safeThreadTitle(message) {
   const caption = ashenCaptionTitle(message);
-  if (caption.length >= 3) return caption;
+  if (caption) return caption;
 
-  const name = message.member?.displayName ||
-    message.author?.globalName || message.author?.username || "Member";
-  const image = [...(message.attachments?.values() || [])]
+  const name = ashenPosterName(message);
+  const image = [...(message?.attachments?.values() || [])]
     .find(a => a.contentType?.startsWith("image/") ||
       /\.(?:png|jpe?g|gif|webp)$/i.test(a.name || ""));
 
   if (image) {
-    const filename = (image.name || "")
+    const filename = cleanAshenThreadTitle((image.name || "")
       .replace(/\.(?:png|jpe?g|gif|webp)$/i, "")
-      .replace(/[_-]+/g, " ")
-      .replace(/[^\p{L}\p{N}\s'-]/gu, "")
-      .trim();
-    // Camera-generated names are not useful showcase titles.
+      .replace(/[_-]+/g, " "));
     if (filename.length >= 4 &&
         !/^(?:img|image|photo|screenshot|dsc|capture|received|file)[\s\d_-]*$/i.test(filename) &&
-        !/^\d{8,}$/.test(filename))
-      return filename.slice(0, 78);
-    return ("Artwork — " + name).slice(0, 78);
+        !/^\d{8,}$/i.test(filename) &&
+        !isGenericAshenThreadTitle(filename)) return filename;
   }
 
-  return ("Showcase — " + name).slice(0, 78);
+  return cleanAshenThreadTitle(
+    (ashenHasImage(message) ? "Artwork — " : "Showcase — ") + name
+  );
+}
+
+function bestAshenThreadTitle(message, thread) {
+  // Staff-written captions take precedence over visual API tags.
+  const caption = message ? ashenCaptionTitle(message) : "";
+  if (caption) return caption;
+
+  const existing = cleanAshenThreadTitle(thread.name);
+  const hasOldAutoPrefix = /^(?:[\s\p{Extended_Pictographic}\uFE0F\u200D]+)\s*/u
+    .test(thread.name) || /(?:\s[•·|]\s)/u.test(thread.name);
+  // Keep real custom names, with decorations removed. Generic old image
+  // labels (e.g. "Animation • Anime") are not useful names.
+  if (!isGenericAshenThreadTitle(existing) &&
+      !/^(?:showcase|artwork)\s*[—-]\s*ashen$/i.test(existing) &&
+      !/^(?:img|screenshot|image|photo)[\s_]*\d{3,}$/i.test(existing)) {
+    // A label list from Vision is not a descriptive title. A single
+    // meaningful subject remains valid even if it once had an emoji.
+    return existing;
+  }
+
+  return message
+    ? safeThreadTitle(message)
+    : cleanAshenThreadTitle("Showcase — " + (thread.ownerId || "Ashen"));
 }
 
 // Optional visual titles: enable Google Cloud Vision API and configure
@@ -1404,22 +1471,22 @@ async function visualAshenThreadTitle(message) {
   const json = await result.json();
   if (json.responses?.[0]?.error) throw new Error(json.responses[0].error.message);
 
-  const generic = /^(?:image|photography|photograph|art|artwork|illustration|visual arts|graphic design|fictional character|font|text|computer wallpaper|drawing|clip art)$/i;
   const labels = (json.responses?.[0]?.labelAnnotations || [])
-    .filter(x => x.score >= 0.76 && !generic.test(x.description || ""))
-    .map(x => (x.description || "").trim())
-    .filter(Boolean);
+    .filter(x => x.score >= 0.82)
+    .map(x => cleanAshenThreadTitle(x.description))
+    .filter(x => x.length >= 4 && x.length <= 55)
+    .filter(x => !isGenericAshenThreadTitle(x));
 
-  // A single reliable subject is cleaner than a list of vague API tags.
-  const subject = labels.find(x => x.length >= 4 && x.length <= 55);
-  return subject ? subject.replace(/\b\w/g, c => c.toUpperCase()).slice(0, 78) : null;
+  // Google Vision cannot reliably identify every anime character or scene.
+  // Never use generic tags such as "Anime" or "Animation" as a title.
+  const subject = labels[0] || null;
+  return subject ? subject.replace(/\b\w/g, c => c.toUpperCase()) : null;
 }
 
 async function renameAshenThreadFromImage(message, thread) {
   if (!thread?.isThread?.() || !process.env.GOOGLE_VISION_API_KEY) return false;
-  // Staff-provided captions are always preferable to automated image tags.
-  if (ashenCaptionTitle(message).length >= 3) return false;
-  if (thread.name !== safeThreadTitle(message)) return false;
+  if (ashenCaptionTitle(message)) return false;
+  if (cleanAshenThreadTitle(thread.name) !== safeThreadTitle(message)) return false;
 
   const title = await visualAshenThreadTitle(message);
   if (!title || title === thread.name) return false;
@@ -1427,7 +1494,7 @@ async function renameAshenThreadFromImage(message, thread) {
   const wasArchived = thread.archived === true;
   if (wasArchived) await thread.setArchived(false, "Updating showcase title");
   try {
-    await thread.setName(title, "Image-based Ashen showcase title");
+    await thread.setName(cleanAshenThreadTitle(title), "Ashen image subject title");
   } finally {
     if (wasArchived && !thread.archived)
       await thread.setArchived(true, "Restore original archive status").catch(() => {});
