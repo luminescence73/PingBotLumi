@@ -1156,134 +1156,78 @@ Use the reactions above for quick changes or open Settings to manage everything 
 
 async function setupHelpCenter() {
   const row1 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("help_game")
-      .setLabel("Game Help")
-      .setEmoji("🎮")
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId("help_team")
-      .setLabel("Need a Team")
-      .setEmoji("👥")
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId("help_staff")
-      .setLabel("Ask Staff")
-      .setEmoji("🛡️")
-      .setStyle(ButtonStyle.Danger),
-    new ButtonBuilder()
-      .setCustomId("help_discord")
-      .setLabel("Discord Help")
-      .setEmoji("⚙️")
-      .setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId("help_game").setLabel("Game Support").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("help_team").setLabel("Find a Team").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("help_staff").setLabel("Contact Staff").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("help_discord").setLabel("Discord Support").setStyle(ButtonStyle.Secondary)
   );
-
   const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("help_faq")
-      .setLabel("FAQ")
-      .setEmoji("❓")
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId("help_guide")
-      .setLabel("Server Guide")
-      .setEmoji("🧭")
-      .setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId("help_faq").setLabel("FAQ").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("help_guide").setLabel("Server Guide").setStyle(ButtonStyle.Secondary)
   );
 
-  const content = `# 🖤 Ashen Help Center
+  const content = `# ASHEN / SUPPORT
+**Select a route below.**
 
-Need something? Pick what you’re looking for below and Vestra will get you to the right place.
+**GAME SUPPORT** — Builds, mechanics, and strategy.
+**FIND A TEAM** — Form a squad for guild content.
+**CONTACT STAFF** — Private request to leadership.
+**DISCORD SUPPORT** — Technical or server issues.
+**FAQ / SERVER GUIDE** — Common questions and navigation.
 
-## 🎮 Community Help
-**Game Help** — builds, mechanics, strategies, or anything SxS
-**Need a Team** — find people to run something with
-
-## 🛡️ Private Staff Help
-**Ask Staff** — privately contact Ashen leadership. Other members won’t see your request.
-
-## ⚙️ Server Support
-**Discord Help** — server or Discord problems
-**FAQ** — quick answers to common questions
-**Server Guide** — figure out where everything is
-
-*You don’t need to hunt down a staff member just to ask something. 🖤*`;
+Staff requests are handled privately.`;
 
   await upsertBotPanel(
-    CHANNELS.HELP,
-    "panel_help_center",
+    CHANNELS.HELP, "panel_help_center",
     { content, embeds: [], components: [row1, row2] },
-    "# 🖤 Ashen Help Center"
+    "# ASHEN / SUPPORT"
   );
-
-  console.log("✅ Help Center ready.");
 }
 
 async function setupGuildPingsPanel() {
-  const content = `# 🔔 Ashen Guild Ping Log
+  const content = `# ASHEN / ALERT HISTORY
+This channel records guild and tournament alerts sent by Vestra.
 
-This channel is Vestra’s **event history** — a clean record of the reminders that were sent.
+**DELIVERY**
+Your actual notifications appear in your selected language's General channel.
 
-## 🌎 Where Your Real Ping Goes
-If you’re subscribed to an event, Vestra sends your actual ping in your **primary-language General channel**.
-
-## 🔕 Why This Channel Stays Quiet
-Messages here intentionally do **not** ping roles or @everyone. This is the master log so staff can confirm what Vestra sent and when.
-
-*Your personal notification choices are managed in <#${CHANNELS.PREFERENCES}>.*`;
+**ARCHIVE**
+These records do not send extra role pings. Manage subscriptions in <#${CHANNELS.PREFERENCES}>.`;
 
   await upsertBotPanel(
-    CHANNELS.REMINDERS,
-    "panel_guild_pings",
+    CHANNELS.REMINDERS, "panel_guild_pings",
     { content, embeds: [], components: [] },
-    "# 🔔 Ashen Guild Ping Log"
+    "# ASHEN / ALERT HISTORY"
   );
 }
 
 async function setupIntroductionPanel() {
-  const content = `# 👋 Welcome to the Ashen Family
+  const content = `# ASHEN / ROSTER
+**New members enter here.**
 
-This is where newly onboarded members get introduced!
+Vestra announces completed inductions with each member's language, playstyle, and social preference.
 
-Say hi, welcome people in, and don’t be afraid to start a conversation. Ashen is a guild first, but it’s also a community. 🖤
-
-## ✨ New Member Introductions
-When someone finishes onboarding, Vestra posts a little member card with their:
-
-🌎 **Primary language**
-🎮 **Playstyle**
-💬 **Social vibe**
-
-It’s just enough to make breaking the ice a little easier.
-
-**See a new face? Go say hi!**`;
+Welcome new recruits. Make them part of the guild.`;
 
   await upsertBotPanel(
-    CHANNELS.INTRODUCTIONS,
-    "panel_introductions",
+    CHANNELS.INTRODUCTIONS, "panel_introductions",
     { content, embeds: [], components: [] },
-    "# 👋 Welcome to the Ashen Family"
+    "# ASHEN / ROSTER"
   );
 }
 
 async function setupStaffRequestsPanel() {
-  const content = `# 🛡️ Ashen Staff Requests
+  const content = `# ASHEN / COMMAND REQUESTS
+**Staff access only.**
 
-Private member requests from the Help Center appear here for Ashen leadership.
+Private support requests appear here with the member, submission time, details, and status.
 
-## 📬 What You’ll See
-Each request shows the member, their message, when it was submitted, and its current status.
-
-## 🔒 Keep It Here
-This channel is for staff handling only. Keep member requests and sensitive details inside the staff team.
-
-*Vestra will ping the appropriate leadership roles when a new request arrives.*`;
+Keep all member information confidential. Vestra notifies leadership when a new request arrives.`;
 
   await upsertBotPanel(
-    CHANNELS.STAFF_REQUESTS,
-    "panel_staff_requests",
+    CHANNELS.STAFF_REQUESTS, "panel_staff_requests",
     { content, embeds: [], components: [] },
-    "# 🛡️ Ashen Staff Requests"
+    "# ASHEN / COMMAND REQUESTS"
   );
 }
 
@@ -1902,54 +1846,42 @@ async function ensureAshenMembersDiscussion(message) {
 async function setupGuildMembersPanel() {
   const guild = getGuild();
   if (!guild) return;
-
   const channel = getAshenMembersChannel(guild);
   if (!channel) return;
 
   await guild.members.fetch().catch(() => {});
-
   const humanMembers = guild.members.cache.filter(member => !member.user.bot);
   const staffCount = humanMembers.filter(member => isStaff(member)).size;
   const onboardedCount = humanMembers.filter(
     member => member.roles.cache.has(ONBOARDING_COMPLETE)
   ).size;
 
-  const content = `# 🖤 Ashen Members
+  const content = `# ASHEN / SHOWCASE
+**Official guild showcase.**
 
-This is Ashen Warriors' showcase for artwork, screenshots, event graphics, projects, achievements, and guild memories.
+**POSTING**
+Only Ashen staff may publish artwork, battle records, event graphics, achievements, or guild highlights. Members may view and react.
 
-## 🛡️ Staff-Only Posts
-**Only Ashen staff may post in this channel.** Everyone can read, react, and join discussion threads.
+**DISCUSSION**
+Vestra creates a thread for each staff post. All replies belong in that thread.
 
-## 🖼️ Automatic Threads
-Every staff showcase post gets a discussion thread from Vestra. Keep comments and questions inside those threads.
+**CREDITS**
+Credit the original creator using "Credits to @artist" or "Art by @artist" in the caption. Vestra records the credit alongside the post details.
 
-## 🎨 Artist & Creator Credits
-When sharing someone else's art, graphics, or other creations, include **Credits to @artist** or **Art by @artist** in your caption. Vestra displays the credit in the post's discussion thread alongside its details. Credits are never assumed from the person posting.
+**ROSTER**
+${humanMembers.size} members · ${staffCount} staff · ${onboardedCount} inducted
 
-## 👥 Our Community
-**${humanMembers.size}** members
-**${staffCount}** staff members
-**${onboardedCount}** members fully onboarded
-
-## ✨ Your Vestra Card
-Your card shows your language access, notification language, pings, playstyle, and social preference.
-
-Press the button below anytime to view it.`;
+Use the profile button to view your Vestra settings and roles.`;
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("settings_card")
-      .setLabel("View My Vestra Card")
-      .setEmoji("👤")
-      .setStyle(ButtonStyle.Primary)
+    new ButtonBuilder().setCustomId("settings_card")
+      .setLabel("View Profile").setStyle(ButtonStyle.Primary)
   );
 
   await upsertBotPanel(
-    channel,
-    "panel_guild_members",
+    channel, "panel_guild_members",
     { content, embeds: [], components: [row] },
-    "# 🖤 Ashen Members"
+    "# ASHEN / SHOWCASE"
   );
 }
 
