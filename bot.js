@@ -3148,63 +3148,40 @@ function eventBoardDefaultEmbeds() {
   const events = upcomingEvents(6);
   const next = events[0];
   const future = events.slice(1);
-
   const now = chicagoParts();
+  const schedule = isCentralDSTDate(now.year, now.month, now.day)
+    ? "Daylight Saving Time" : "Standard Time";
 
-  const mode = isCentralDSTDate(
-    now.year,
-    now.month,
-    now.day
-  )
-    ? "Summer / DST schedule"
-    : "Winter / Standard schedule";
-
-  const nextEmbed = new EmbedBuilder()
+  const upcoming = new EmbedBuilder()
     .setColor(BRAND_COLOR)
-    .setAuthor({
-      name: "🖤 ASHEN LIVE EVENT BOARD"
-    })
-    .setTitle("⏳ NEXT EVENT")
+    .setAuthor({ name: "ASHEN / WAR BOARD" })
+    .setTitle("NEXT OPERATION")
     .setDescription(
       next
-        ? `# ${next.label.toUpperCase()}
+        ? `**${next.label.toUpperCase()}**
+${eventDayLabel(next)} | ${format12Hour(next.hour, next.minute)}
 
-## ${eventDayLabel(next)} • ${format12Hour(next.hour, next.minute)}
-
-# ⏱️ ${countdownText(next.relativeMinutes)} LEFT
-
-**This is the very next scheduled Ashen event.**`
-        : "# No upcoming events found."
+**IN ${countdownText(next.relativeMinutes)}**`
+        : "No upcoming operations scheduled."
     )
-    .setFooter({
-      text: "Vestra • Live Event Board • Next Event"
-    })
+    .setFooter({ text: "Vestra | Live Schedule" })
     .setTimestamp();
 
-  const followingEmbed = new EmbedBuilder()
+  const following = new EmbedBuilder()
     .setColor(BRAND_COLOR)
-    .setTitle("📅 FOLLOWING EVENTS")
+    .setTitle("UPCOMING OPERATIONS")
     .setDescription(
       future.length
-        ? future
-            .map(
-              event =>
-                `**${event.label}**
-${eventDayLabel(event)} • ${format12Hour(event.hour, event.minute)}
-⏳ ${countdownText(event.relativeMinutes)}`
-            )
-            .join("\n\n")
-        : "Nothing else is currently scheduled."
+        ? future.map(e =>
+          `**${e.label}** — ${eventDayLabel(e)} ${format12Hour(e.hour, e.minute)}
+In ${countdownText(e.relativeMinutes)}`
+        ).join("\n\n")
+        : "No further operations currently scheduled."
     )
-    .addFields({
-      name: "🕒 CURRENT GAME SCHEDULE",
-      value: mode
-    })
-    .setFooter({
-      text: "Vestra • Live Event Board • Coming Up"
-    });
+    .addFields({ name: "Schedule", value: schedule })
+    .setFooter({ text: "Vestra | Ashen Operations" });
 
-  return [nextEmbed, followingEmbed];
+  return [upcoming, following];
 }
 
 async function eventBoardPayload() {
@@ -3237,13 +3214,13 @@ async function eventBoardPayload() {
 
   const title =
     state.round > 0
-      ? `${tournament.emoji} ${tournament.name} — Round ${state.round}/${tournament.rounds}`
-      : `${tournament.emoji} ${tournament.name} — LIVE`;
+      ? `${tournament.name.toUpperCase()} | ROUND ${state.round}/${tournament.rounds}`
+      : `${tournament.name.toUpperCase()} | LIVE`;
 
   const embed = new EmbedBuilder()
     .setColor(BRAND_COLOR)
     .setAuthor({
-      name: "🏆 ASHEN TOURNAMENT MODE"
+      name: "ASHEN / TOURNAMENT COMMAND"
     })
     .setTitle(title)
     .setFooter({
@@ -3258,7 +3235,7 @@ async function eventBoardPayload() {
 
     embed
       .setDescription(
-        `# 🟢 VOTING OPEN
+        `# VOTING OPEN
 
 ## ROUND ${state.round} / ${tournament.rounds}
 
@@ -3267,11 +3244,11 @@ Voting closes <t:${unix}:R>.`
       )
       .addFields(
         {
-          name: "⏳ Voting Window",
+          name: "Voting window",
           value: `<t:${unix}:R> • closes at <t:${unix}:t>`
         },
         {
-          name: "⚔️ What Happens Next?",
+          name: "Next phase",
           value: "When voting closes, Vestra switches the board back to **Battle in Progress**. Staff will manually open the next vote when the battle actually ends."
         }
       );
@@ -3281,13 +3258,13 @@ Voting closes <t:${unix}:R>.`
     embed
       .setDescription(
         state.round === 0
-          ? `# 🔴 BATTLE IN PROGRESS
+          ? `# BATTLE IN PROGRESS
 
 ## ${tournament.name.toUpperCase()} IS LIVE
 
 The tournament battle is underway.
 Ashen staff will manually open **Vote 1** when the battle is ready.`
-          : `# 🔴 BATTLE IN PROGRESS
+          : `# BATTLE IN PROGRESS
 
 ## ROUND ${state.round} COMPLETE
 
@@ -3295,7 +3272,7 @@ Voting is closed while the battle plays out.
 The next voting round will open manually when the battle is ready.`
       )
       .addFields({
-        name: "🗳️ Next Vote",
+        name: "Next vote",
         value: `Staff will manually open **Round ${nextRound}** when the battle is ready.`
       });
 
@@ -3311,7 +3288,7 @@ The next voting round will open manually when the battle is ready.`
   } else if (state.phase === "final_battle") {
     embed
       .setDescription(
-        `# 🏁 FINAL BATTLE
+        `# FINAL BATTLE
 
 ## ALL 4 VOTING ROUNDS COMPLETE
 
@@ -3319,7 +3296,7 @@ The last battle is underway.
 When it ends, staff can close Tournament Mode and return to the normal event board.`
       )
       .addFields({
-        name: "🏁 Finish",
+        name: "Finish",
         value: "When the final battle ends, staff can finish Tournament Mode and return the board to the normal upcoming-event view."
       });
 
