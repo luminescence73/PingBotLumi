@@ -1173,6 +1173,11 @@ Let people know how you usually like to interact.
       .setCustomId("settings_card")
       .setLabel("My Vestra Card")
       .setEmoji("👤")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("admin_apply_theme")
+      .setLabel("Apply Ashen Theme")
+      .setEmoji("🖤")
       .setStyle(ButtonStyle.Secondary)
   );
 
@@ -2875,21 +2880,40 @@ function startScheduler() {
 
 async function applyAshenSidebarTheme() {
   const guild = getGuild();
-  if (!guild) return;
+  const report = { renamed: [], skipped: [], failed: [] };
+
+  if (!guild) {
+    report.failed.push("Guild unavailable");
+    return report;
+  }
 
   await guild.channels.fetch().catch(() => {});
 
   const renameChannel = async (channel, desiredName) => {
-    if (!channel || channel.name === desiredName) return;
+    if (!channel) {
+      report.failed.push(`Missing channel/category for ${desiredName}`);
+      return;
+    }
+
+    if (channel.name === desiredName) {
+      report.skipped.push(desiredName);
+      return;
+    }
+
     const oldName = channel.name;
+
     try {
       await channel.edit({
         name: desiredName,
         reason: "Ashen black-and-white celestial sidebar theme"
       });
+
+      report.renamed.push(`${oldName} → ${desiredName}`);
       console.log(`✦ Renamed ${oldName} → ${desiredName}`);
     } catch (error) {
-      console.error(`⚠️ Could not rename ${oldName} → ${desiredName}:`, error.message);
+      const detail = `${oldName} → ${desiredName}: ${error.message}`;
+      report.failed.push(detail);
+      console.error("⚠️ Theme rename failed:", detail);
     }
   };
 
@@ -2948,12 +2972,17 @@ async function applyAshenSidebarTheme() {
   }
 
   const renameChildByCurrentName = async (parent, possibleNames, desiredName) => {
-    if (!parent) return;
+    if (!parent) {
+      report.failed.push(`Parent category unavailable for ${desiredName}`);
+      return;
+    }
+
     const channel = guild.channels.cache.find(ch => {
       if (ch.parentId !== parent.id) return false;
       const name = ch.name.toLowerCase();
       return possibleNames.some(candidate => name.includes(candidate.toLowerCase()));
     }) || null;
+
     await renameChannel(channel, desiredName);
   };
 
@@ -2986,7 +3015,11 @@ async function applyAshenSidebarTheme() {
   await renameChildByCurrentName(voiceCategory, ["boss grinds", "boss-grinds"], "♱・Boss Grinds");
   await renameChildByCurrentName(voiceCategory, ["admins"], "◇・Admins");
 
-  console.log("🖤 Ashen black-and-white celestial sidebar theme applied.");
+  console.log(
+    `🖤 Ashen theme report: ${report.renamed.length} renamed, ${report.skipped.length} already styled, ${report.failed.length} failed.`
+  );
+
+  return report;
 }
 
 // =====================================================
@@ -3027,6 +3060,12 @@ async function runPermissionChecks() {
 
   const guild = getGuild();
   if (guild) {
+    const me = guild.members.me || await guild.members.fetchMe().catch(() => null);
+    if (me?.permissions?.has(PermissionFlagsBits.ManageChannels)) {
+      console.log("✅ Server: Manage Channels OK");
+    } else {
+      console.error("❌ Server: Missing Manage Channels");
+    }
     const reactionTranslatePermissions = [
       ...basic,
       { name: "Manage Messages", flag: PermissionFlagsBits.ManageMessages }
@@ -3272,6 +3311,46 @@ client.on(Events.MessageReactionRemove, (reaction, user) => {
 
 client.on(Events.InteractionCreate, async interaction => {
   try {
+    if (interaction.isButton() && interaction.customId === "admin_apply_theme") {
+      if (!isStaff(interaction.member)) {
+        return interaction.reply({
+          content: "🖤 This control is only available to Ashen staff.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+      const me = interaction.guild.members.me || await interaction.guild.members.fetchMe().catch(() => null);
+      const canManageChannels = !!me?.permissions?.has(PermissionFlagsBits.ManageChannels);
+
+      if (!canManageChannels) {
+        return interaction.editReply(
+          "❌ Vestra does not currently have **Manage Channels** in this server."
+        );
+      }
+
+      const report = await applyAshenSidebarTheme();
+
+      const renamed = report.renamed.length
+        ? report.renamed.slice(0, 12).map(x => `✅ ${x}`).join("\n")
+        : "Nothing changed.";
+
+      const failed = report.failed.length
+        ? "\n\n**Couldn’t change:**\n" + report.failed.slice(0, 8).map(x => `❌ ${x}`).join("\n")
+        : "";
+
+      return interaction.editReply({
+        content:
+          `# 🖤 Ashen Theme Applied\n\n` +
+          `**Renamed:** ${report.renamed.length}\n` +
+          `**Already styled:** ${report.skipped.length}\n` +
+          `**Failed:** ${report.failed.length}\n\n` +
+          renamed +
+          failed
+      });
+    }
+
     // -------------------------------------------------
     // HELP BUTTONS
     // -------------------------------------------------
