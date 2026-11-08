@@ -552,7 +552,10 @@ async function upsertBotPanel(channelOrId, stateKey, payload, footerTag) {
     message = recent?.find(
       m =>
         m.author.id === client.user.id &&
-        m.embeds?.some(embed => embed.footer?.text === footerTag)
+        (
+          m.content?.includes(footerTag) ||
+          m.embeds?.some(embed => embed.footer?.text === footerTag)
+        )
     ) || null;
   }
 
@@ -808,6 +811,16 @@ function onboardingEmbed(step, title, description) {
     .setFooter({ text: "Vestra • Ashen Warriors Onboarding" });
 }
 
+function onboardingStepContent(step, title, description) {
+  return `# ${title}
+
+**${step}**
+
+${description}
+
+*Vestra • Ashen Warriors Onboarding*`;
+}
+
 function onboardingSummaryEmbed(session) {
   const language = session.language ? LANGUAGES[session.language] : null;
   const reminderNames = (session.reminders || []).map(key => {
@@ -893,22 +906,19 @@ function finishButton(language) {
 // =====================================================
 
 async function setupStartHere() {
-  const embed = brandEmbed(
-    "🖤 Welcome to Ashen Warriors",
-    `We’re glad you’re here!
+  const content = `# 🖤 Welcome to Ashen Warriors
 
-Ashen is built to make the guild easier to navigate, keep everyone connected, and give us a place to hang out outside of Sword x Staff.`
-  )
-    .addFields(
-      {
-        name: "1. 📜 Read the Rules",
-        value: `Head to <#${CHANNELS.RULES}> and take a minute to look through the server guidelines.
+We’re glad you’re here!
 
-They’re simple: be respectful, use common sense, and don’t intentionally make the server uncomfortable for other people.`
-      },
-      {
-        name: "2. 🌎 Complete Onboarding",
-        value: `Go to <#${CHANNELS.ONBOARDING}> and press **Start Onboarding**.
+Ashen is built to make the guild easier to navigate, keep everyone connected, and give us a place to hang out outside of **Sword x Staff**.
+
+## 1. 📜 Read the Rules
+Head to <#${CHANNELS.RULES}> and take a minute to look through the server guidelines.
+
+They’re pretty simple — be respectful, use common sense, and don’t intentionally make the server uncomfortable for other people.
+
+## 2. 🌎 Complete Onboarding
+Go to <#${CHANNELS.ONBOARDING}> and press **🌎 Start Onboarding**.
 
 You’ll choose your:
 🌎 **Primary language**
@@ -916,79 +926,64 @@ You’ll choose your:
 🎮 **Playstyle**
 💬 **Social preference**
 
-Once you finish, the rest of the server unlocks automatically.`
-      },
-      {
-        name: "3. ✨ Customize Vestra Anytime",
-        value: `Use <#${CHANNELS.PREFERENCES}> whenever you want to change languages, reminders, tournament alerts, playstyle, social preferences, or your primary notification language.`
-      },
-      {
-        name: "4. 🆘 Need Help?",
-        value: `Visit <#${CHANNELS.HELP}> for game help, strategies, team finding, Discord help, FAQs, or to privately contact Ashen staff.`
-      },
-      {
-        name: "5. 👋 Meet the Guild",
-        value: `After onboarding, Vestra will introduce you in <#${CHANNELS.INTRODUCTIONS}>. Say hi, meet people, and make yourself at home!`
-      },
-      {
-        name: "🌍 Language & Translation",
-        value: `General language chats are automatically mirrored and translated between 🇺🇸 English, 🇪🇸 Spanish, 🇫🇷 French, 🇩🇪 German, 🇵🇹 Portuguese, and 🇯🇵 Japanese.
+Once you finish, the rest of the server will unlock automatically.
 
-In other supported text channels, react **🌐** to a message and Vestra will temporarily translate it into **your primary language**.`
-      },
-      {
-        name: "🔔 Guild Notifications",
-        value: "Vestra can send guild reminders directly in your **primary notification language**. You only receive the alerts you choose, including Clash reminders and tournament notifications."
-      },
-      {
-        name: "🖤 Most Importantly",
-        value: `Ashen Warriors is still meant to be fun. Talk, joke around, share things, ask for help, play together, and get to know people.
+## 3. ✨ Customize Vestra Anytime
+Use <#${CHANNELS.PREFERENCES}> whenever you want to change your language access, notification language, guild reminders, tournament alerts, playstyle, or social preference.
 
-**Welcome home. 🖤**`
-      }
-    )
-    .setFooter({ text: "Vestra • Start Here" });
+## 4. 🆘 Need Help?
+Visit <#${CHANNELS.HELP}> for game help, strategies, team finding, Discord help, FAQs, or to privately contact Ashen staff.
+
+## 5. 👋 Meet the Guild
+After onboarding, Vestra will introduce you in <#${CHANNELS.INTRODUCTIONS}>. Say hi, meet people, and make yourself at home!
+
+# 🌍 Language & Translation
+General language chats are automatically mirrored and translated between 🇺🇸 🇪🇸 🇫🇷 🇩🇪 🇵🇹 🇯🇵.
+
+In other supported text channels, react **🌐** to a message and Vestra will temporarily translate it into **your primary language**.
+
+# 🔔 Guild Notifications
+Vestra sends the alerts **you choose** in your primary notification language — including Clash reminders and tournament notifications.
+
+## 🖤 Most Importantly
+Ashen Warriors is still meant to be fun. Talk, joke around, share things, ask for help, play together, and get to know people.
+
+**Welcome home. 🖤**`;
 
   await upsertBotPanel(
     CHANNELS.START_HERE,
     "panel_start_here",
-    { embeds: [embed] },
-    "Vestra • Start Here"
+    { content, embeds: [], components: [] },
+    "# 🖤 Welcome to Ashen Warriors"
   );
 }
 
 async function setupRulesPanel() {
-  const embed = brandEmbed(
-    "🖤 Ashen Rules — The Big Picture",
-    "The full guild rules are posted above. This is the short version to keep in mind while you’re here."
-  )
-    .addFields(
-      {
-        name: "🤝 Community",
-        value: "Be cool to each other, keep drama from taking over, use the right channels when you can, and know when a joke has gone too far."
-      },
-      {
-        name: "🛡️ Safety & Fairness",
-        value: "No genuine harassment, scams, account stealing, malicious links, cheats, or leaking private guild/staff information."
-      },
-      {
-        name: "🎮 Guild Expectations",
-        value: "Participate when you can, communicate if plans change, and remember that real life comes first."
-      },
-      {
-        name: "❤️ Most Importantly",
-        value: `**This is a guild, not a workplace.**
+  const content = `# 🖤 Ashen Rules — The Big Picture
 
-Have fun, make friends, share memes, play together, and use common sense. Most small issues get a friendly reminder before anything serious happens.`
-      }
-    )
-    .setFooter({ text: "Vestra • Rules Guide" });
+The full rules are posted in this channel. This is the easy version to keep in the back of your mind while you’re here.
+
+## 🤝 Community
+Be cool to each other. Joking, teasing, and chaos are fine — just know when to stop, keep public drama from taking over, and try to use the right channels.
+
+## 🛡️ Safety & Fairness
+No genuine harassment, scams, account stealing, malicious links, cheats, or intentionally leaking private guild or staff information.
+
+## 🎮 Guild Expectations
+Participate when you can, communicate when plans change, and remember that **real life comes first**. Nobody is expected to treat Ashen like a job.
+
+# ❤️ Most Importantly
+**This is a guild, not a workplace.**
+
+Talk, joke around, be weird, make friends, share memes, play together, and enjoy yourself.
+
+Mistakes happen. Most small issues will get a friendly reminder before anything serious happens. 🖤`;
 
   await upsertBotPanel(
     CHANNELS.RULES,
     "panel_rules_guide",
-    { embeds: [embed] },
-    "Vestra • Rules Guide"
+    { content, embeds: [], components: [] },
+    "# 🖤 Ashen Rules — The Big Picture"
   );
 }
 
@@ -1001,39 +996,32 @@ async function setupOnboardingPanel() {
       .setStyle(ButtonStyle.Primary)
   );
 
-  const embed = brandEmbed(
-    "🖤 Ashen Warriors Onboarding",
-    "Welcome! Vestra will walk you through a quick setup so the server works the way **you** want it to."
-  )
-    .addFields(
-      {
-        name: "🌎 1 · Primary Language",
-        value: "Choose the language Vestra should use for your notifications and translations."
-      },
-      {
-        name: "🔔 2 · Ping Preferences",
-        value: "Pick the guild reminders you actually want — including Server Tournament and Nexus Tournament alerts."
-      },
-      {
-        name: "🎮 3 · Playstyle",
-        value: "Let the guild know whether you’re Casual, Competitive, or a little of both."
-      },
-      {
-        name: "💬 4 · Social Preference",
-        value: "Choose Chatty, Quiet, or Either so people have a better idea of your vibe."
-      },
-      {
-        name: "✨ After You Finish",
-        value: "Vestra assigns your roles, saves your settings, introduces you to the guild, and unlocks the rest of Ashen."
-      }
-    )
-    .setFooter({ text: "Vestra • Ashen Warriors Onboarding" });
+  const content = `# 🖤 Ashen Warriors Onboarding
+
+Welcome! Vestra will walk you through your setup so Ashen works the way **you** want it to.
+
+## 🌎 1 · Primary Language
+Choose the language Vestra should use for your notifications and 🌐 translations.
+
+## 🔔 2 · Ping Preferences
+Pick the guild reminders you actually want — including regular events, **Server Tournament**, and **Nexus Tournament** alerts.
+
+## 🎮 3 · Playstyle
+Let the guild know whether you’re **Casual**, **Competitive**, or a little of both.
+
+## 💬 4 · Social Preference
+Choose **Chatty**, **Quiet**, or **Either** so other members have a better idea of your vibe.
+
+## ✨ When You Finish
+Vestra saves your settings, assigns your roles, introduces you to the guild, and unlocks the rest of Ashen.
+
+**Ready? Press the button below. 🖤**`;
 
   await upsertBotPanel(
     CHANNELS.ONBOARDING,
     "panel_onboarding",
-    { embeds: [embed], components: [row] },
-    "Vestra • Ashen Warriors Onboarding"
+    { content, embeds: [], components: [row] },
+    "# 🖤 Ashen Warriors Onboarding"
   );
 }
 
@@ -1045,14 +1033,12 @@ const preferenceMessages = {
   social: null
 };
 
-async function createPreferencePanel(channel, stateKey, embed, emojis) {
-  const footerTag = embed.data.footer?.text || null;
-
+async function createPreferencePanel(channel, stateKey, content, emojis, anchor) {
   const message = await upsertBotPanel(
     channel,
     stateKey,
-    { embeds: [embed] },
-    footerTag
+    { content, embeds: [], components: [] },
+    anchor
   );
 
   if (!message) return null;
@@ -1081,77 +1067,86 @@ async function setupPreferences() {
   preferenceMessages.languages = await createPreferencePanel(
     channel,
     "panel_pref_languages",
-    brandEmbed(
-      "🌎 Language Access",
-      `React to **every language chat** you want access to.
+    `# 🌎 Language Access
 
-🇺🇸 English
-🇪🇸 Spanish
-🇫🇷 French
-🇩🇪 German
-🇵🇹 Portuguese
-🇯🇵 Japanese`
-    ).setFooter({ text: "Vestra • Language Access" }),
-    Object.values(LANGUAGES).map(x => x.emoji)
+React to **every language chat** you want access to. You can join one or all of them.
+
+🇺🇸 **English**
+🇪🇸 **Spanish**
+🇫🇷 **French**
+🇩🇪 **German**
+🇵🇹 **Portuguese**
+🇯🇵 **Japanese**
+
+*Your primary notification language is managed separately in My Vestra Settings.*`,
+    Object.values(LANGUAGES).map(x => x.emoji),
+    "# 🌎 Language Access"
   );
 
   preferenceMessages.reminders = await createPreferencePanel(
     channel,
     "panel_pref_reminders",
-    brandEmbed(
-      "🔔 Game & Guild Reminder Pings",
-      `React to every reminder you want. Vestra sends the actual alert in your **primary notification language**.
+    `# 🔔 Game & Guild Reminder Pings
 
-🔄 Reset
-🌅 Morning Conquest
-🌌 Night Conquest
-🔔 Clash Opening Call
-⚔️ Clash Battle Call
-🚨 Clash Final Call
-⏰ Guild Clash Registration`
-    ).setFooter({ text: "Vestra • Game Reminder Pings" }),
-    Object.values(REMINDERS).map(x => x.emoji)
+React to every reminder you want. Vestra sends the actual alert in your **primary notification language**.
+
+🔄 **Reset**
+🌅 **Morning Conquest**
+🌌 **Night Conquest**
+🔔 **Clash Opening Call**
+⚔️ **Clash Battle Call**
+🚨 **Clash Final Call**
+⏰ **Guild Clash Registration**
+
+*Only the reminders you choose will ping you.*`,
+    Object.values(REMINDERS).map(x => x.emoji),
+    "# 🔔 Game & Guild Reminder Pings"
   );
 
   preferenceMessages.tournaments = await createPreferencePanel(
     channel,
     "panel_pref_tournaments",
-    brandEmbed(
-      "🏆 Tournament Pings",
-      `React to the tournaments you want alerts for. You’ll get the **tournament start ping** plus manual voting-round alerts in your primary language.
+    `# 🏆 Tournament Pings
+
+Want tournament alerts? React below. Vestra sends them in your **primary notification language**.
 
 ⚔️ **Server Tournament**
-🌀 **Nexus Tournament**`
-    ).setFooter({ text: "Vestra • Tournament Pings" }),
-    Object.values(TOURNAMENTS).map(x => x.emoji)
+Starts **2:00 PM Standard / 3:00 PM DST**
+
+🌀 **Nexus Tournament**
+Starts **3:00 PM Standard / 4:00 PM DST**
+
+Voting rounds are opened manually by Ashen staff when each battle is ready.`,
+    Object.values(TOURNAMENTS).map(x => x.emoji),
+    "# 🏆 Tournament Pings"
   );
 
   preferenceMessages.playstyle = await createPreferencePanel(
     channel,
     "panel_pref_playstyle",
-    brandEmbed(
-      "🎮 Playstyle",
-      `Choose the option that fits you best.
+    `# 🎮 Playstyle
 
-🌿 Casual
-⚔️ Competitive
-🎮 Both`
-    ).setFooter({ text: "Vestra • Playstyle" }),
-    Object.values(PLAYSTYLE).map(x => x.emoji)
+Choose the option that fits you best.
+
+🌿 **Casual** — here to relax and have fun
+⚔️ **Competitive** — you like pushing and competing
+🎮 **Both** — depends on the day`,
+    Object.values(PLAYSTYLE).map(x => x.emoji),
+    "# 🎮 Playstyle"
   );
 
   preferenceMessages.social = await createPreferencePanel(
     channel,
     "panel_pref_social",
-    brandEmbed(
-      "💬 Social Preference",
-      `Choose how you usually like to interact in the server.
+    `# 💬 Social Preference
 
-💬 Chatty
-🌙 Quiet
-✨ Either`
-    ).setFooter({ text: "Vestra • Social Preference" }),
-    Object.values(SOCIAL).map(x => x.emoji)
+Let people know how you usually like to interact.
+
+💬 **Chatty** — come talk to me!
+🌙 **Quiet** — I’m around, just quieter
+✨ **Either** — I can go either way`,
+    Object.values(SOCIAL).map(x => x.emoji),
+    "# 💬 Social Preference"
   );
 
   const row = new ActionRowBuilder().addComponents(
@@ -1167,21 +1162,25 @@ async function setupPreferences() {
       .setStyle(ButtonStyle.Secondary)
   );
 
-  const settingsEmbed = brandEmbed(
-    "✨ My Vestra Settings",
-    "Want everything in one place? Open your personal settings panel to manage your language access, primary notification language, pings, tournament alerts, playstyle, and social preference."
-  )
-    .addFields({
-      name: "💡 Tip",
-      value: "Reaction roles above are great for quick changes. **My Vestra Settings** is the easiest way to review everything at once."
-    })
-    .setFooter({ text: "Vestra • Personal Settings" });
+  const settingsContent = `# ✨ My Vestra Settings
+
+Want everything in one place? Open your personal Vestra panel to review and change your setup anytime.
+
+🌎 **Language access**
+🔔 **Primary notification language**
+⏰ **Game & guild pings**
+🏆 **Tournament pings**
+🎮 **Playstyle**
+💬 **Social preference**
+
+## 💡 Quick Tip
+The reactions above are perfect for fast changes. **My Vestra Settings** is best when you want to review everything at once.`;
 
   await upsertBotPanel(
     channel,
     "panel_pref_settings",
-    { embeds: [settingsEmbed], components: [row] },
-    "Vestra • Personal Settings"
+    { content: settingsContent, embeds: [], components: [row] },
+    "# ✨ My Vestra Settings"
   );
 
   console.log("✅ Preference panels and Vestra settings ready.");
@@ -1224,105 +1223,99 @@ async function setupHelpCenter() {
       .setStyle(ButtonStyle.Secondary)
   );
 
-  const embed = brandEmbed(
-    "🖤 Ashen Help Center",
-    "Need something? Pick the option that matches what you’re looking for and Vestra will point you in the right direction."
-  )
-    .addFields(
-      {
-        name: "🎮 Community Help",
-        value: `**Game Help** for builds, mechanics, and strategies.
-**Need a Team** when you’re looking for people to play with.`
-      },
-      {
-        name: "🛡️ Private Staff Help",
-        value: "**Ask Staff** sends a private request to Ashen leadership. Other members won’t see it."
-      },
-      {
-        name: "⚙️ Server Support",
-        value: "Use **Discord Help**, **FAQ**, or **Server Guide** when you need help navigating Ashen or Discord."
-      }
-    )
-    .setFooter({ text: "Vestra • Ashen Help Center" });
+  const content = `# 🖤 Ashen Help Center
+
+Need something? Pick what you’re looking for below and Vestra will get you to the right place.
+
+## 🎮 Community Help
+**Game Help** — builds, mechanics, strategies, or anything SxS
+**Need a Team** — find people to run something with
+
+## 🛡️ Private Staff Help
+**Ask Staff** — privately contact Ashen leadership. Other members won’t see your request.
+
+## ⚙️ Server Support
+**Discord Help** — server or Discord problems
+**FAQ** — quick answers to common questions
+**Server Guide** — figure out where everything is
+
+*You don’t need to hunt down a staff member just to ask something. 🖤*`;
 
   await upsertBotPanel(
     CHANNELS.HELP,
     "panel_help_center",
-    { embeds: [embed], components: [row1, row2] },
-    "Vestra • Ashen Help Center"
+    { content, embeds: [], components: [row1, row2] },
+    "# 🖤 Ashen Help Center"
   );
 
   console.log("✅ Help Center ready.");
 }
 
 async function setupGuildPingsPanel() {
-  const embed = brandEmbed(
-    "🔔 Ashen Guild Ping Log",
-    "This channel is Vestra’s event history — it keeps a clean record of reminders that were sent."
-  )
-    .addFields(
-      {
-        name: "🌎 Where Your Real Ping Goes",
-        value: "Subscribed members are pinged in their **primary-language General channel**, not here."
-      },
-      {
-        name: "🔕 Why This Channel Stays Quiet",
-        value: "Messages here intentionally do **not** ping roles or @everyone. They’re just the master log so staff can verify what Vestra sent."
-      }
-    )
-    .setFooter({ text: "Vestra • Guild Ping Log" });
+  const content = `# 🔔 Ashen Guild Ping Log
+
+This channel is Vestra’s **event history** — a clean record of the reminders that were sent.
+
+## 🌎 Where Your Real Ping Goes
+If you’re subscribed to an event, Vestra sends your actual ping in your **primary-language General channel**.
+
+## 🔕 Why This Channel Stays Quiet
+Messages here intentionally do **not** ping roles or @everyone. This is the master log so staff can confirm what Vestra sent and when.
+
+*Your personal notification choices are managed in <#${CHANNELS.PREFERENCES}>.*`;
 
   await upsertBotPanel(
     CHANNELS.REMINDERS,
     "panel_guild_pings",
-    { embeds: [embed] },
-    "Vestra • Guild Ping Log"
+    { content, embeds: [], components: [] },
+    "# 🔔 Ashen Guild Ping Log"
   );
 }
 
 async function setupIntroductionPanel() {
-  const embed = brandEmbed(
-    "👋 Welcome to the Ashen Family",
-    `This is where newly onboarded members get introduced!
+  const content = `# 👋 Welcome to the Ashen Family
 
-Say hi, welcome people in, and don’t be afraid to start a conversation. Ashen is a guild first, but it’s also a community. 🖤`
-  )
-    .addFields({
-      name: "✨ New Member Cards",
-      value: "When someone finishes onboarding, Vestra posts their language, playstyle, and social preference here so it’s a little easier to get to know them."
-    })
-    .setFooter({ text: "Vestra • Introductions" });
+This is where newly onboarded members get introduced!
+
+Say hi, welcome people in, and don’t be afraid to start a conversation. Ashen is a guild first, but it’s also a community. 🖤
+
+## ✨ New Member Introductions
+When someone finishes onboarding, Vestra posts a little member card with their:
+
+🌎 **Primary language**
+🎮 **Playstyle**
+💬 **Social vibe**
+
+It’s just enough to make breaking the ice a little easier.
+
+**See a new face? Go say hi!**`;
 
   await upsertBotPanel(
     CHANNELS.INTRODUCTIONS,
     "panel_introductions",
-    { embeds: [embed] },
-    "Vestra • Introductions"
+    { content, embeds: [], components: [] },
+    "# 👋 Welcome to the Ashen Family"
   );
 }
 
 async function setupStaffRequestsPanel() {
-  const embed = brandEmbed(
-    "🛡️ Ashen Staff Requests",
-    "Private member requests from the Help Center appear here for Ashen leadership."
-  )
-    .addFields(
-      {
-        name: "📬 What You’ll See",
-        value: "Each request includes the member, their message, and when it was submitted."
-      },
-      {
-        name: "🔒 Privacy",
-        value: "This channel is for staff handling only. Keep member requests and sensitive details inside the staff team."
-      }
-    )
-    .setFooter({ text: "Vestra • Staff Requests" });
+  const content = `# 🛡️ Ashen Staff Requests
+
+Private member requests from the Help Center appear here for Ashen leadership.
+
+## 📬 What You’ll See
+Each request shows the member, their message, when it was submitted, and its current status.
+
+## 🔒 Keep It Here
+This channel is for staff handling only. Keep member requests and sensitive details inside the staff team.
+
+*Vestra will ping the appropriate leadership roles when a new request arrives.*`;
 
   await upsertBotPanel(
     CHANNELS.STAFF_REQUESTS,
     "panel_staff_requests",
-    { embeds: [embed] },
-    "Vestra • Staff Requests"
+    { content, embeds: [], components: [] },
+    "# 🛡️ Ashen Staff Requests"
   );
 }
 
@@ -1341,33 +1334,19 @@ async function setupGuildMembersPanel() {
     member => member.roles.cache.has(ONBOARDING_COMPLETE)
   ).size;
 
-  const embed = brandEmbed(
-    "🖤 Ashen Guild Members",
-    "A quick look at the community that makes Ashen Warriors what it is."
-  )
-    .addFields(
-      {
-        name: "👥 Members",
-        value: `${humanMembers.size}`,
-        inline: true
-      },
-      {
-        name: "🛡️ Staff",
-        value: `${staffCount}`,
-        inline: true
-      },
-      {
-        name: "✅ Onboarded",
-        value: `${onboardedCount}`,
-        inline: true
-      },
-      {
-        name: "✨ Your Vestra Card",
-        value: "Use the button below to view your own language, ping, playstyle, and social settings."
-      }
-    )
-    .setFooter({ text: "Vestra • Guild Members" })
-    .setTimestamp();
+  const content = `# 🖤 Ashen Guild Members
+
+A little snapshot of the community that makes Ashen Warriors what it is.
+
+## 👥 Our Community
+**${humanMembers.size}** members
+**${staffCount}** staff members
+**${onboardedCount}** members fully onboarded
+
+## ✨ Your Vestra Card
+Want to see your own setup? Your card shows your language access, primary notification language, pings, playstyle, and social preference.
+
+Press the button below anytime to view it.`;
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -1380,8 +1359,8 @@ async function setupGuildMembersPanel() {
   await upsertBotPanel(
     channel,
     "panel_guild_members",
-    { embeds: [embed], components: [row] },
-    "Vestra • Guild Members"
+    { content, embeds: [], components: [row] },
+    "# 🖤 Ashen Guild Members"
   );
 }
 
@@ -3180,15 +3159,14 @@ client.on(Events.InteractionCreate, async interaction => {
       );
 
       return interaction.editReply({
-        embeds: [
-          onboardingEmbed(
-            "STEP 1 OF 4",
-            "🌎 Choose Your Primary Language",
-            `Pick the language Vestra should use for your **notifications** and 🌐 reaction translations.
+        content: onboardingStepContent(
+          "STEP 1 OF 4",
+          "🌎 Choose Your Primary Language",
+          `Pick the language Vestra should use for your **notifications** and 🌐 reaction translations.
 
 You can unlock additional language chats later in Role Preferences.`
-          )
-        ],
+        ),
+        embeds: [],
         components: [
           languageMenu()
         ]
@@ -3232,15 +3210,14 @@ You can unlock additional language chats later in Role Preferences.`
       );
 
       return interaction.editReply({
-        embeds: [
-          onboardingEmbed(
-            "STEP 2 OF 4",
-            "🔔 Choose Your Pings",
-            `${TEXT[language].reminders}
+        content: onboardingStepContent(
+          "STEP 2 OF 4",
+          "🔔 Choose Your Pings",
+          `${TEXT[language].reminders}
 
 Choose **as many as you want**. This includes regular guild reminders plus Server Tournament and Nexus Tournament alerts. You can change these anytime.`
-          )
-        ],
+        ),
+        embeds: [],
         components: [
           reminderMenu(
             language
@@ -3288,15 +3265,14 @@ Choose **as many as you want**. This includes regular guild reminders plus Serve
       );
 
       return interaction.editReply({
-        embeds: [
-          onboardingEmbed(
-            "STEP 3 OF 4",
-            "🎮 Choose Your Playstyle",
-            `${TEXT[session.language].playstyle}
+        content: onboardingStepContent(
+          "STEP 3 OF 4",
+          "🎮 Choose Your Playstyle",
+          `${TEXT[session.language].playstyle}
 
 This is just for fun and helps other members get a feel for how you like to play.`
-          )
-        ],
+        ),
+        embeds: [],
         components: [
           playstyleMenu(
             session.language
@@ -3340,15 +3316,14 @@ This is just for fun and helps other members get a feel for how you like to play
       );
 
       return interaction.editReply({
-        embeds: [
-          onboardingEmbed(
-            "STEP 4 OF 4",
-            "💬 Choose Your Social Vibe",
-            `${TEXT[session.language].social}
+        content: onboardingStepContent(
+          "STEP 4 OF 4",
+          "💬 Choose Your Social Vibe",
+          `${TEXT[session.language].social}
 
 There’s no wrong answer — this just gives the community a small hint about how you like to interact.`
-          )
-        ],
+        ),
+        embeds: [],
         components: [
           socialMenu(
             session.language
@@ -3391,12 +3366,37 @@ There’s no wrong answer — this just gives the community a small hint about h
         session
       );
 
+      const language = LANGUAGES[session.language];
+      const playstyle = session.playstyle ? PLAYSTYLE[session.playstyle] : null;
+      const social = session.social ? SOCIAL[session.social] : null;
+      const reminderNames = (session.reminders || []).map(key => {
+        if (REMINDERS[key]) return `${REMINDERS[key].emoji} ${REMINDERS[key].name}`;
+        if (key.startsWith("tournament:")) {
+          const tournament = TOURNAMENTS[key.split(":")[1]];
+          return tournament ? `${tournament.emoji} ${tournament.name}` : key;
+        }
+        return key;
+      });
+
       return interaction.editReply({
-        embeds: [
-          onboardingSummaryEmbed(
-            session
-          )
-        ],
+        content: `# ✅ Ready to Join Ashen Warriors
+
+Everything looks good! Review your choices below, then press **Finish Onboarding**.
+
+## 🌎 Primary Language
+${language.emoji} **${language.name}**
+
+## 🔔 Pings
+${reminderNames.length ? reminderNames.join("\n") : "🔕 No reminders"}
+
+## 🎮 Playstyle
+${playstyle ? `${playstyle.emoji} **${playstyle.name}**` : "Not specified"}
+
+## 💬 Social Vibe
+${social ? `${social.emoji} **${social.name}**` : "Not specified"}
+
+*You can change all of this later in Role Preferences.*`,
+        embeds: [],
         components: [
           finishButton(
             session.language
@@ -3572,17 +3572,14 @@ There’s no wrong answer — this just gives the community a small hint about h
         .catch(() => {});
 
       return interaction.editReply({
-        embeds: [
-          brandEmbed(
-            "✅ Welcome to Ashen Warriors!",
-            `${TEXT[session.language].done}
+        content: `# ✅ Welcome to Ashen Warriors!
 
-Your roles and Vestra preferences are saved. Head into the server, say hi, and make yourself at home. 🖤`
-          ).setFooter({
-            text:
-              "Vestra • Onboarding Complete"
-          })
-        ],
+${TEXT[session.language].done}
+
+Your roles and Vestra preferences are saved. The rest of Ashen is ready for you now.
+
+Head into the server, say hi, and make yourself at home. 🖤`,
+        embeds: [],
         components: []
       });
     }
