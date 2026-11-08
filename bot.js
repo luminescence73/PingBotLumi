@@ -2965,9 +2965,11 @@ async function applyAshenSidebarTheme(guildOverride = null) {
     "╰━━━ ♡ ━━━╯"
   ]);
 
-  const isDecorativeCategoryName = name => {
+  const isAshenDecorationName = name => {
     if (!name) return false;
+
     return (
+      OLD_DECORATIVE_TEXT_NAMES.has(name) ||
       /^╰.*╯$/u.test(name) ||
       /^━+.*━+$/u.test(name)
     );
@@ -2980,7 +2982,7 @@ async function applyAshenSidebarTheme(guildOverride = null) {
       }
 
       if (ch.type === ChannelType.GuildCategory) {
-        return isDecorativeCategoryName(ch.name);
+        return isAshenDecorationName(ch.name);
       }
 
       return false;
@@ -2988,7 +2990,21 @@ async function applyAshenSidebarTheme(guildOverride = null) {
 
     for (const channel of oldPieces.values()) {
       try {
-        await channel.delete("Refresh Ashen decorative sidebar pieces");
+        // Move any accidentally nested channels back to no parent before deleting old decoration categories.
+        if (channel.type === ChannelType.GuildCategory) {
+          const children = guild.channels.cache.filter(
+            ch => ch.parentId === channel.id
+          );
+
+          for (const child of children.values()) {
+            await child.setParent(null, {
+              lockPermissions: false,
+              reason: "Rebuild Ashen category layout"
+            }).catch(() => {});
+          }
+        }
+
+        await channel.delete("Rebuild Ashen decorative category layout");
         console.log(`✦ Removed old decorative piece ${channel.name}`);
       } catch (error) {
         report.failed.push(
@@ -2996,17 +3012,14 @@ async function applyAshenSidebarTheme(guildOverride = null) {
         );
       }
     }
+
+    await guild.channels.fetch().catch(() => {});
   };
 
-  const makeDecorativeBar = (topName, symbol, kind = "spacer") => {
+  const makeFooterName = (topName, symbol) => {
     const targetLength = Math.max(12, Array.from(topName).length);
     const center = ` ${symbol} `;
-    const edgeChars = kind === "footer" ? 2 : 0;
-    const innerWidth = Math.max(
-      8,
-      targetLength - edgeChars
-    );
-
+    const innerWidth = Math.max(8, targetLength - 2);
     const dashCount = Math.max(
       4,
       innerWidth - Array.from(center).length
@@ -3015,68 +3028,68 @@ async function applyAshenSidebarTheme(guildOverride = null) {
     const left = Math.ceil(dashCount / 2);
     const right = Math.floor(dashCount / 2);
 
-    if (kind === "footer") {
-      return `╰${"━".repeat(left)}${center}${"━".repeat(right)}╯`;
-    }
-
-    return `${"━".repeat(left)}${center}${"━".repeat(right)}`;
+    return `╰${"━".repeat(left)}${center}${"━".repeat(right)}╯`;
   };
 
-  const ensureDecorativeCategory = async (
-    topCategory,
-    topName,
-    symbol,
-    kind,
-    offset
-  ) => {
-    if (!topCategory) {
-      report.failed.push(
-        `Missing top category for decorative ${kind}: ${topName}`
-      );
-      return null;
-    }
-
-    const name = makeDecorativeBar(topName, symbol, kind);
-
+  const ensureCategory = async (name, reason) => {
     let category = guild.channels.cache.find(
       ch =>
         ch.type === ChannelType.GuildCategory &&
         ch.name === name
     ) || null;
 
+    if (category) {
+      report.skipped.push(name);
+      return category;
+    }
+
     try {
-      if (!category) {
-        category = await guild.channels.create({
-          name,
-          type: ChannelType.GuildCategory,
-          permissionOverwrites: [
-            {
-              id: guild.roles.everyone.id,
-              allow: [PermissionFlagsBits.ViewChannel]
-            }
-          ],
-          reason: `Ashen decorative ${kind} category`
-        });
+      category = await guild.channels.create({
+        name,
+        type: ChannelType.GuildCategory,
+        permissionOverwrites: [
+          {
+            id: guild.roles.everyone.id,
+            allow: [PermissionFlagsBits.ViewChannel]
+          }
+        ],
+        reason
+      });
 
-        report.created.push(name);
-        console.log(`✦ Created decorative ${kind} category ${name}`);
-      } else {
-        report.skipped.push(name);
-      }
-
-      await category
-        .setPosition(topCategory.position + offset)
-        .catch(() => {});
-
+      report.created.push(name);
+      console.log(`✦ Created decorative category ${name}`);
       return category;
     } catch (error) {
-      const detail =
-        `Decorative ${kind} category ${name}: ${error.message}`;
-
-      report.failed.push(detail);
-      console.error("⚠️ Decorative category failed:", detail);
+      report.failed.push(
+        `Could not create decorative category ${name}: ${error.message}`
+      );
       return null;
     }
+  };
+
+  const moveChannelToCategory = async (channel, category) => {
+    if (!channel || !category) return;
+
+    try {
+      if (channel.parentId !== category.id) {
+        await channel.setParent(category.id, {
+          lockPermissions: false,
+          reason: "Ashen celestial sidebar grouping"
+        });
+      }
+    } catch (error) {
+      report.failed.push(
+        `Could not move ${channel.name} under ${category.name}: ${error.message}`
+      );
+    }
+  };
+
+  const placeCategoryAfter = async (category, anchorCategory, offset = 1) => {
+    if (!category || !anchorCategory) return;
+
+    await category
+      .setPosition(anchorCategory.position + offset)
+      .catch(() => {});
   };
 
   const byId = id => guild.channels.cache.get(id) || null;
@@ -3178,36 +3191,238 @@ async function applyAshenSidebarTheme(guildOverride = null) {
   await renameChildByCurrentName(voiceCategory, ["admins"], "◇・Admins");
 
   // -------------------------------------------------
-  // DECORATIVE CATEGORY SPACERS + FOOTERS
+  // DECORATIVE SPLIT CATEGORIES + FOOTERS
   // -------------------------------------------------
 
   await cleanupOldDecorativePieces();
 
-  const categoryFrames = [
-    [welcomeCategory, "╭━━ 𖤐 WELCOME TO ASHEN 𖤐 ━━╮", "🖤"],
-    [infoCategory, "╭━━ ✦ ASHEN INFO ✦ ━━╮", "𖤐"],
-    [sxsCategory, "╭━━ ⚔ SWORD X STAFF ⚔ ━━╮", "✦"],
-    [socialCategory, "╭━━ ♡ ASHEN SOCIAL ♡ ━━╮", "☾"],
-    [voiceCategory, "╭━━ 𖤐 ASHEN VOICE 𖤐 ━━╮", "♡"]
-  ];
+  // Refresh references after cleanup.
+  await guild.channels.fetch().catch(() => {});
 
-  for (const [category, topName, symbol] of categoryFrames) {
-    await ensureDecorativeCategory(
-      category,
-      topName,
-      symbol,
-      "spacer",
-      1
-    );
+  const refreshedWelcome = byId(WELCOME_CATEGORY_ID);
+  const refreshedInfo = byId(IMPORTANT_CATEGORY_ID);
+  const refreshedSocial = byId(SOCIAL_CATEGORY_ID);
+  const refreshedSxs = findCategory("SWORD X STAFF", "SWORD X", "SXS");
+  const refreshedVoice = findCategory("ASHEN VOICE", "VOICE CALLS");
 
-    await ensureDecorativeCategory(
-      category,
-      topName,
-      symbol,
-      "footer",
-      2
+  // WELCOME: split after introductions.
+  const welcomeSpacer = await ensureCategory(
+    "━━━━ 𖤐 ━━━━",
+    "Ashen Welcome section divider"
+  );
+
+  await placeCategoryAfter(welcomeSpacer, refreshedWelcome, 1);
+
+  await moveChannelToCategory(
+    byId(CHANNELS.PREFERENCES),
+    welcomeSpacer
+  );
+
+  const guildMembersChannel = guild.channels.cache.find(
+    ch =>
+      ch.isTextBased?.() &&
+      (ch.name.includes("ashen-members") || ch.name.includes("guild-members"))
+  ) || null;
+
+  await moveChannelToCategory(
+    guildMembersChannel,
+    welcomeSpacer
+  );
+
+  const welcomeFooter = await ensureCategory(
+    makeFooterName(
+      "╭━━ 𖤐 WELCOME TO ASHEN 𖤐 ━━╮",
+      "🖤"
+    ),
+    "Ashen Welcome footer"
+  );
+
+  await placeCategoryAfter(
+    welcomeFooter,
+    welcomeSpacer,
+    1
+  );
+
+  // INFO: split after the two announcement channels.
+  const infoSpacer = await ensureCategory(
+    "━━━━ ✦ ━━━━",
+    "Ashen Info section divider"
+  );
+
+  await placeCategoryAfter(
+    infoSpacer,
+    refreshedInfo,
+    1
+  );
+
+  await moveChannelToCategory(
+    byId(CHANNELS.REMINDERS),
+    infoSpacer
+  );
+
+  await moveChannelToCategory(
+    byId(CHANNELS.HIGHLIGHTS),
+    infoSpacer
+  );
+
+  await moveChannelToCategory(
+    byId(CHANNELS.EVENT_BOARD),
+    infoSpacer
+  );
+
+  const infoFooter = await ensureCategory(
+    makeFooterName(
+      "╭━━ ✦ ASHEN INFO ✦ ━━╮",
+      "𖤐"
+    ),
+    "Ashen Info footer"
+  );
+
+  await placeCategoryAfter(
+    infoFooter,
+    infoSpacer,
+    1
+  );
+
+  // SWORD X STAFF: split after the six language General channels.
+  const sxsSpacer = await ensureCategory(
+    "━━━━ ⚔ ━━━━",
+    "Sword x Staff section divider"
+  );
+
+  await placeCategoryAfter(
+    sxsSpacer,
+    refreshedSxs,
+    1
+  );
+
+  await moveChannelToCategory(
+    byId("1507566115994472568"),
+    sxsSpacer
+  );
+
+  await moveChannelToCategory(
+    byId("1538251460351889599"),
+    sxsSpacer
+  );
+
+  const sxsEventBoard = guild.channels.cache.find(
+    ch =>
+      ch.isTextBased?.() &&
+      ch.name.includes("sxs-event-board")
+  ) || null;
+
+  await moveChannelToCategory(
+    sxsEventBoard,
+    sxsSpacer
+  );
+
+  const sxsFooter = await ensureCategory(
+    makeFooterName(
+      "╭━━ ⚔ SWORD X STAFF ⚔ ━━╮",
+      "✦"
+    ),
+    "Sword x Staff footer"
+  );
+
+  await placeCategoryAfter(
+    sxsFooter,
+    sxsSpacer,
+    1
+  );
+
+  // SOCIAL: keep General alone above the divider.
+  const socialSpacer = await ensureCategory(
+    "━━━━ ♡ ━━━━",
+    "Ashen Social section divider"
+  );
+
+  await placeCategoryAfter(
+    socialSpacer,
+    refreshedSocial,
+    1
+  );
+
+  for (const id of [
+    "1542252701578961028",
+    "1542252734076690442",
+    "1542252850808365226",
+    "1542252884614184980",
+    "1542252909222166628",
+    "1542253001824272454",
+    "1542253232464601138"
+  ]) {
+    await moveChannelToCategory(
+      byId(id),
+      socialSpacer
     );
   }
+
+  const socialFooter = await ensureCategory(
+    makeFooterName(
+      "╭━━ ♡ ASHEN SOCIAL ♡ ━━╮",
+      "☾"
+    ),
+    "Ashen Social footer"
+  );
+
+  await placeCategoryAfter(
+    socialFooter,
+    socialSpacer,
+    1
+  );
+
+  // VOICE: split after General + Gaming.
+  const voiceSpacer = await ensureCategory(
+    "━━━━ 𖤐 ━━━━",
+    "Ashen Voice section divider"
+  );
+
+  await placeCategoryAfter(
+    voiceSpacer,
+    refreshedVoice,
+    1
+  );
+
+  const bossChannel = guild.channels.cache.find(
+    ch =>
+      ch.parentId === refreshedVoice?.id &&
+      ch.name.includes("Boss Grinds")
+  ) || guild.channels.cache.find(
+    ch => ch.name.includes("Boss Grinds")
+  ) || null;
+
+  const adminVoice = guild.channels.cache.find(
+    ch =>
+      ch.parentId === refreshedVoice?.id &&
+      ch.name.includes("Admins")
+  ) || guild.channels.cache.find(
+    ch => ch.name.includes("Admins")
+  ) || null;
+
+  await moveChannelToCategory(
+    bossChannel,
+    voiceSpacer
+  );
+
+  await moveChannelToCategory(
+    adminVoice,
+    voiceSpacer
+  );
+
+  const voiceFooter = await ensureCategory(
+    makeFooterName(
+      "╭━━ 𖤐 ASHEN VOICE 𖤐 ━━╮",
+      "♡"
+    ),
+    "Ashen Voice footer"
+  );
+
+  await placeCategoryAfter(
+    voiceFooter,
+    voiceSpacer,
+    1
+  );
 
   console.log(
     `🖤 Ashen theme report: ${report.renamed.length} renamed, ${report.created.length} decorative categories created, ${report.skipped.length} already styled, ${report.failed.length} failed.`
