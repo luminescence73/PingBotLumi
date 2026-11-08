@@ -3907,13 +3907,13 @@ async function applyAshenSidebarTheme(guildOverride = null) {
 
   const names = new Map([
     [CHANNELS.START_HERE, "✦・entry"],
-    [CHANNELS.RULES, "♱・code"],
-    [CHANNELS.ONBOARDING, "✦・induction"],
+    [CHANNELS.RULES, "code"],
+    [CHANNELS.ONBOARDING, "induction"],
     [CHANNELS.HELP, "support"],
     [CHANNELS.STAFF_REQUESTS, "command-requests"],
     [CHANNELS.INTRODUCTIONS, "roster"],
-    [CHANNELS.PREFERENCES, "◇・vestra-settings"],
-    [CHANNELS.REMINDERS, "⌁・alert-history"],
+    [CHANNELS.PREFERENCES, "vestra-settings"],
+    [CHANNELS.REMINDERS, "alert-history"],
     [CHANNELS.HIGHLIGHTS, "highlights"],
     [CHANNELS.EVENT_BOARD, "♱・war-board"],
     [LANGUAGE_CHANNELS.english.channel, "general-en"],
