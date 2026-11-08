@@ -3250,10 +3250,14 @@ async function applyAshenSidebarTheme(guildOverride = null) {
     }
 
     const name = channel.name || "";
-    const hasWords = /[\p{L}\p{N}]/u.test(name);
+
+    // Only protect names that contain actual readable title text.
+    // Decorative Unicode symbols such as 𖤐, ♡, ✦, ☾, ⚔, etc.
+    // must NOT count as letters, or old spacer/footer pieces survive cleanup.
+    const hasReadableTitle = /[A-Za-z0-9]/.test(name);
 
     return (
-      !hasWords &&
+      !hasReadableTitle &&
       (
         dashCount(name) >= 3 ||
         /^╰/u.test(name) ||
@@ -3263,7 +3267,8 @@ async function applyAshenSidebarTheme(guildOverride = null) {
   };
 
   // Delete every old Vestra-only decoration first.
-  // Main title categories contain words, so they are never matched here.
+  // This includes legacy decorative text channels with a # icon.
+  // Main title categories contain readable words, so they are never matched here.
   const oldDecorations = guild.channels.cache.filter(
     isOldDecorativePiece
   );
@@ -3461,6 +3466,17 @@ async function applyAshenSidebarTheme(guildOverride = null) {
   );
 
   const createDecorationCategory = async name => {
+    const existing = guild.channels.cache.find(
+      ch =>
+        ch.type === ChannelType.GuildCategory &&
+        ch.name === name
+    ) || null;
+
+    if (existing) {
+      report.skipped.push(name);
+      return existing;
+    }
+
     try {
       const category = await guild.channels.create({
         name,
