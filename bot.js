@@ -386,7 +386,8 @@ const REMINDERS = {
   opening: { name: "Clash Opening Call", emoji: "🔔", role: "1537936269043310752" },
   battle: { name: "Clash Battle Call", emoji: "⚔️", role: "1537936402497675265" },
   final: { name: "Clash Final Call", emoji: "🚨", role: "1537936646442451075" },
-  registration: { name: "Guild Clash Registration", emoji: "⏰", role: "1537936738998296618" }
+  registration: { name: "Guild Clash Registration", emoji: "⏰", role: "1537936738998296618" },
+  chaos_last_call: { name: "Chaos Tyrant Last Call", emoji: "☄️", role: "1569150660363026462" }
 };
 
 const TOURNAMENTS = {
@@ -1078,6 +1079,7 @@ Subscribe with the reactions below. Notifications go to your selected General ch
 
 Reset · Morning Conquest · Night Conquest
 Clash Opening · Clash Battle · Clash Final · Registration
+Chaos Tyrant Last Call — non-Nexus Sundays
 
 Only selected alerts will notify you.`,
     Object.values(REMINDERS).map(x => x.emoji),
@@ -2399,6 +2401,16 @@ const SCHEDULED_EVENTS = [
     tournament: "nexus",
     kind: "tournament_start",
     alternateSunday: true
+  },
+  {
+    key: "chaos_tyrant_last_call",
+    label: "Chaos Tyrant Last Call",
+    role: REMINDERS.chaos_last_call.role,
+    days: [0],
+    winter: [20,0],
+    summer: [21,0],
+    text: "☄️ Chaos Tyrant: Last call! One hour remains before Chaos closes.",
+    nonNexusSunday: true
   }
 ];
 
@@ -2409,6 +2421,7 @@ function eventTimeForDate(event, y, m, d) {
 function eventApplies(event, y, m, d, weekday) {
   if (!event.days.includes(weekday)) return false;
   if (event.alternateSunday && !isNexusSunday(y, m, d)) return false;
+  if (event.nonNexusSunday && isNexusSunday(y, m, d)) return false;
   return true;
 }
 
@@ -4339,7 +4352,7 @@ Head into the server, say hi, and make yourself at home. 🖤`,
         .setCustomId("settings_reminders_select")
         .setPlaceholder("Choose game alerts")
         .setMinValues(1)
-        .setMaxValues(8)
+        .setMaxValues(Object.keys(REMINDERS).length + 1)
         .addOptions(
           ...Object.entries(REMINDERS).map(([key, item]) => ({ label: item.name, value: key, emoji: item.emoji, default: selected.includes(key) })),
           { label: "No game pings", value: "none", emoji: "🔕", default: selected.length === 0 }
