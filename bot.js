@@ -3492,11 +3492,11 @@ async function organizeAshenSidebar(guildOverride = null) {
       "entry", "code", "induction", "support", "command-requests",
       "roster", "vestra-settings", "ashen-showcase"
     ] },
-    { name: "✧ ASHEN | COMMAND", existing: ["ASHEN | COMMAND"], channels: [
+    { name: "✧ ASHEN | COMMAND", existing: ["ASHEN | COMMAND", "ASHEN INFO"], channels: [
       "ashen-announcements", "sxs-announcements", "alert-history",
       "highlights", "war-board"
     ] },
-    { name: "✦ SWORD X STAFF | GUILD", existing: ["SWORD X STAFF | OPERATIONS"], channels: [
+    { name: "✦ SWORD X STAFF | GUILD", existing: ["SWORD X STAFF | OPERATIONS", "SWORD X STAFF | GUILD"], channels: [
       "sxs-event-board", "general-en", "general-es", "general-fr",
       "general-de", "general-pt", "general-ja", "sxs-media", "sxs-resources"
     ] },
