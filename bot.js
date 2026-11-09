@@ -1621,7 +1621,7 @@ Use this channel for staff-side member reference and Vestra profile access. Comm
 async function setupStaffChatPanel() {
   const guild = getGuild();
   const channel = guild?.channels?.cache?.find(
-    ch => ch.type === ChannelType.GuildText && ch.name === "staff-chat"
+    ch => ch.type === ChannelType.GuildText && ch.name.toLowerCase().endsWith("staff-chat")
   );
   if (!channel) return;
 
@@ -3750,6 +3750,30 @@ async function organizeAshenSidebar(guildOverride = null) {
     categoryFor.get("✦ SWORD X STAFF | GUILD"),
     "Sword x Staff guild alerts and time-sensitive event notices."
   );
+
+  // Bring back the original Ashen visual markers only on high-priority channels.
+  const decoratedChannels = new Map([
+    ["start-here", "✦ · start-here"],
+    ["announcements", "✧ · announcements"],
+    ["onboarding", "✦ · onboarding"],
+    ["sxs-event-board", "◷ · sxs-event-board"],
+    ["war-board", "⚔ · war-board"],
+    ["guild-pings", "✦ · guild-pings"],
+    ["community-highlights", "✧ · community-highlights"],
+    ["staff-chat", "⚔ · staff-chat"],
+    ["staff-announcements", "✦ · staff-announcements"],
+    ["staff-requests", "✧ · staff-requests"],
+    ["guild-ping-log", "◷ · guild-ping-log"]
+  ]);
+
+  for (const [logicalName, displayName] of decoratedChannels) {
+    const channel = byName(logicalName);
+    if (channel && channel.name !== displayName) {
+      await attempt(`decorate #${logicalName}`, () =>
+        channel.setName(displayName, "Restore selective Ashen sidebar symbols")
+      );
+    }
+  }
 
   // Move channels into the approved categories.
   for (const def of definitions) {
