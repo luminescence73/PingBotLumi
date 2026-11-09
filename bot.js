@@ -1226,7 +1226,7 @@ Staff requests are handled privately.`;
 }
 
 async function setupGuildPingsPanel() {
-  const content = `# ASHEN / ALERT HISTORY
+  const content = `# ASHEN / GUILD PING LOG
 This channel records guild and tournament alerts sent by Vestra.
 
 **DELIVERY**
@@ -1238,12 +1238,12 @@ These records do not send extra role pings. Manage subscriptions in <#${CHANNELS
   await upsertBotPanel(
     CHANNELS.REMINDERS, "panel_guild_pings",
     { content, embeds: [], components: [] },
-    "# ASHEN / ALERT HISTORY"
+    "# ASHEN / GUILD PING LOG"
   );
 }
 
 async function setupIntroductionPanel() {
-  const content = `# ASHEN / ROSTER
+  const content = `# ASHEN / INTRODUCTIONS
 **New members enter here.**
 
 Vestra announces completed inductions with each member's language, playstyle, and social preference.
@@ -1253,12 +1253,12 @@ Welcome new recruits. Make them part of the guild.`;
   await upsertBotPanel(
     CHANNELS.INTRODUCTIONS, "panel_introductions",
     { content, embeds: [], components: [] },
-    "# ASHEN / ROSTER"
+    "# ASHEN / INTRODUCTIONS"
   );
 }
 
 async function setupStaffRequestsPanel() {
-  const content = `# ASHEN / COMMAND REQUESTS
+  const content = `# ASHEN / STAFF REQUESTS
 **Staff access only.**
 
 Private support requests appear here with the member, submission time, details, and status.
@@ -1268,7 +1268,7 @@ Keep all member information confidential. Vestra notifies leadership when a new 
   await upsertBotPanel(
     CHANNELS.STAFF_REQUESTS, "panel_staff_requests",
     { content, embeds: [], components: [] },
-    "# ASHEN / COMMAND REQUESTS"
+    "# ASHEN / STAFF REQUESTS"
   );
 }
 
@@ -2576,7 +2576,7 @@ function formatAlertHistoryMessage(roleId, label, text, deliveredCount) {
 
 async function sendMasterLog(roleId, label, text, deliveredCount) {
   const channel = await client.channels.fetch(CHANNELS.REMINDERS).catch(() => null);
-  if (!channel?.isTextBased()) throw new Error("#alert-history is unavailable");
+  if (!channel?.isTextBased()) throw new Error("#guild-ping-log is unavailable");
 
   // This archival copy must not generate another ping.
   await channel.send({
@@ -2615,7 +2615,7 @@ async function migrateLegacyAlertHistory() {
       inspected++;
       if (message.author.id !== client.user.id) continue;
 
-      // Leave the important #alert-history information panel alone.
+      // Leave the important #guild-ping-log information panel alone.
       if (message.content?.includes("# 🔔 Ashen Guild Ping Log")) continue;
 
       const embed = message.embeds?.find(e => {
