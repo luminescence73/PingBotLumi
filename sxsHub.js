@@ -591,4 +591,194 @@ function payloadHash(payload) {
   };
 
   return createHash("sha256")
-    .update
+    .update(JSON.stringify(serializable))
+    .digest("hex");
+}
+
+async function findBoardMessage(channel, botUserId) {
+  const pins = await channel.messages.fetchPins().catch(() => null);
+  const pinned = pins?.find(message => message.author.id === botUserId && message.embeds?.length);
+  if (pinned) return pinned;
+
+  const recent = await channel.messages.fetch({ limit: 25 }).catch(() => null);
+  return recent?.find(message => message.author.id === botUserId && message.embeds?.length) || null;
+}
+
+async function ensureReadOnlyPermissions(channel, guild, client, staffRoles) {
+  await channel.permissionOverwrites.edit(guild.roles.everyone, {
+    SendMessages: false,
+    CreatePublicThreads: false,
+    CreatePrivateThreads: false,
+    SendMessagesInThreads: false
+  }).catch(error => {
+    console.error(`❌ Could not set read-only permissions for #${channel.name}:`, error.message);
+  });
+
+  for (const roleId of flattenRoleIds(staffRoles)) {
+    await channel.permissionOverwrites.edit(roleId, {
+      ViewChannel: true,
+      SendMessages: true,
+      ReadMessageHistory: true,
+      EmbedLinks: true
+    }).catch(() => {});
+  }
+
+  if (client.user?.id) {
+    await channel.permissionOverwrites.edit(client.user.id, {
+      ViewChannel: true,
+      SendMessages: true,
+      ReadMessageHistory: true,
+      EmbedLinks: true,
+      ManageMessages: true
+    }).catch(() => {});
+  }
+}
+
+async function resolveGuild(client, remindersChannelId) {
+  if (remindersChannelId) {
+    const channel = await client.channels.fetch(remindersChannelId).catch(() => null);
+    if (channel?.guild) return channel.guild;
+  }
+
+  return client.guilds.cache.first() || null;
+}
+
+async function ensureChannels(client, remindersChannelId, staffRoles) {
+  const guild = await resolveGuild(client, remindersChannelId);
+  if (!guild) throw new Error("Ashen Warriors guild could not be resolved.");
+
+  await guild.channels.fetch();
+
+  const category = guild.channels.cache.find(channel =>
+    channel.type === ChannelType.GuildCategory &&
+    normalizeDiscordName(channel.name).includes(normalizeDiscordName(SXS_CATEGORY_MATCH))
+  );
+
+  if (!category) {
+    throw new Error(`Could not find the existing ${SXS_CATEGORY_MATCH} category.`);
+  }
+
+  const resolved = {};
+
+  for (const def of CHANNEL_DEFS) {
+    let channel = guild.channels.cache.find(item =>
+      item.type === ChannelType.GuildText &&
+      item.parentId === category.id &&
+      item.name === def.name
+    );
+
+    if (!channel) {
+      channel = await guild.channels.create({
+        name: def.name,
+        type: ChannelType.GuildText,
+        parent: category.id,
+        topic: def.topic,
+        reason: "Vestra Sword x Staff live information hub"
+      });
+      console.log(`✅ Created SxS channel #${def.name}`);
+    } else if (channel.topic !== def.topic) {
+      await channel.setTopic(def.topic).catch(() => {});
+    }
+
+    await ensureReadOnlyPermissions(channel, guild, client, staffRoles);
+    resolved[def.key] = channel;
+  }
+
+  return resolved;
+}
+
+async function createHub({ client, remindersChannelId, staffRoles }) {
+  let channels = {};
+  let lastGoodData = null;
+  let refreshRunning = false;
+  const hashes = new Map();
+
+  async function upsertBoard(def, channel, payload, { leaveExistingOnFailure = false } = {}) {
+    const existing = await findBoardMessage(channel, client.user.id);
+
+    if (leaveExistingOnFailure && existing) return;
+
+    const hash = payloadHash(payload);
+    if (!existing) {
+      const message = await channel.send(payload);
+      await message.pin().catch(() => {});
+      hashes.set(def.key, hash);
+      return;
+    }
+
+    if (hashes.get(def.key) !== hash) {
+      await existing.edit(payload);
+      hashes.set(def.key, hash);
+    }
+  }
+
+  async function refresh({ ensure = false } = {}) {
+    if (refreshRunning) return;
+    refreshRunning = true;
+
+    try {
+      if (ensure || Object.keys(channels).length !== CHANNEL_DEFS.length) {
+        channels = await ensureChannels(client, remindersChannelId, staffRoles);
+      }
+
+      let data = null;
+      let stale = false;
+
+      try {
+        data = await fetchLiveData();
+        lastGoodData = data;
+      } catch (error) {
+        console.error("❌ SxS live-data refresh failed:", error.message);
+        if (lastGoodData) {
+          data = lastGoodData;
+          stale = true;
+        }
+      }
+
+      if (!data) {
+        for (const def of CHANNEL_DEFS) {
+          const channel = channels[def.key];
+          if (!channel?.isTextBased()) continue;
+          await upsertBoard(def, channel, buildUnavailablePayload(def), { leaveExistingOnFailure: true });
+        }
+        return;
+      }
+
+      const payloads = buildPayloads(data, stale);
+
+      for (const def of CHANNEL_DEFS) {
+        const channel = channels[def.key];
+        const payload = payloads[def.key];
+        if (channel?.isTextBased() && payload) {
+          await upsertBoard(def, channel, payload);
+        }
+      }
+
+      console.log(`✅ SxS live information hub refreshed${stale ? " from last confirmed data" : ""}.`);
+    } catch (error) {
+      console.error("❌ SxS hub refresh error:", error);
+    } finally {
+      refreshRunning = false;
+    }
+  }
+
+  await refresh({ ensure: true });
+  const interval = setInterval(() => void refresh(), REFRESH_MS);
+
+  return {
+    refresh,
+    stop() {
+      clearInterval(interval);
+    }
+  };
+}
+
+export async function setupSxsHub(options) {
+  if (activeHub) {
+    await activeHub.refresh({ ensure: true });
+    return activeHub;
+  }
+
+  activeHub = await createHub(options);
+  return activeHub;
+}
