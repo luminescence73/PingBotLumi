@@ -949,7 +949,7 @@ After induction, Vestra introduces you in <#${CHANNELS.INTRODUCTIONS}>.
 General channels support automatic translation. In other supported channels, use the globe reaction to translate a message.
 
 ## ALERTS
-You receive only the guild and tournament alerts you select.
+Choose guild, Chaos Tyrant Last Call, and tournament alerts. Only your selected reminders will notify you.
 
 **Enter prepared. Stand with Ashen.**`;
 
@@ -1003,7 +1003,7 @@ async function setupOnboardingPanel() {
 Select your primary language for notifications and translation.
 
 **02 — Alerts**
-Select guild reminders and Server/Nexus Tournament alerts.
+Select guild reminders, Chaos Tyrant Last Call, and Server/Nexus Tournament alerts.
 
 **03 — Playstyle**
 Casual, Competitive, or Both.
@@ -1075,13 +1075,13 @@ Primary notification language is set separately in Settings.`,
   preferenceMessages.reminders = await createPreferencePanel(
     channel, "panel_pref_reminders",
     `# GUILD ALERTS
-Subscribe with the reactions below. Notifications go to your selected General channel.
+Select each alert using the matching reaction below. Vestra sends notifications in your selected General language.
 
-Reset · Morning Conquest · Night Conquest
-Clash Opening · Clash Battle · Clash Final · Registration
-Chaos Tyrant Last Call — non-Nexus Sundays
+${Object.values(REMINDERS).map(item => item.emoji + "  " + item.name).join("\n")}
 
-Only selected alerts will notify you.`,
+**Chaos Tyrant Last Call:** Non-Nexus Sundays, 8 PM standard / 9 PM daylight time (one hour before closing).
+
+Only subscribed alerts will notify you.`,
     Object.values(REMINDERS).map(x => x.emoji),
     "# GUILD ALERTS"
   );
@@ -1660,7 +1660,7 @@ function settingsHomeComponents() {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("settings_languages").setLabel("Language Access").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("settings_notify").setLabel("Notification Language").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("settings_reminders").setLabel("Game Pings").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("settings_reminders").setLabel("Guild & Chaos Pings").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("settings_tournaments").setLabel("Tournament Pings").setStyle(ButtonStyle.Secondary)
     ),
     new ActionRowBuilder().addComponents(
@@ -1677,7 +1677,7 @@ function settingsHomeEmbed() {
     "Manage your access, alerts, and member profile."
   ).addFields(
     { name: "Language", value: "Channel access and notification language", inline: true },
-    { name: "Alerts", value: "Guild and tournament subscriptions", inline: true },
+    { name: "Alerts", value: "Guild, Chaos Tyrant Last Call, and tournament subscriptions", inline: true },
     { name: "Profile", value: "Playstyle and social preference", inline: true }
   ).setFooter({ text: "Vestra | Changes save immediately" });
 }
@@ -3727,7 +3727,7 @@ client.on(Events.InteractionCreate, async interaction => {
         content:
           "# ❓ Ashen FAQ\n\n" +
           `🌎 **Languages / notification language:** <#${CHANNELS.PREFERENCES}>\n` +
-          `🔔 **Reminder pings:** <#${CHANNELS.PREFERENCES}>\n` +
+          `🔔 **Guild, Chaos Tyrant Last Call, and tournament pings:** <#${CHANNELS.PREFERENCES}>\n` +
           "🌐 **Quick translation:** in supported text channels, react 🌐 to a message and Vestra will temporarily translate it into your primary language.\n" +
           "🛡️ **Private staff help:** use Ask Staff in this Help Center.",
         flags: MessageFlags.Ephemeral
@@ -3736,7 +3736,7 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isButton() && interaction.customId === "help_guide") {
       return interaction.reply({
         content:
-          `# 🧭 Ashen Server Guide\n\n📍 <#${CHANNELS.START_HERE}> — Start here\n📜 <#${CHANNELS.RULES}> — Rules\n🌎 <#${CHANNELS.ONBOARDING}> — Onboarding\n✨ <#${CHANNELS.PREFERENCES}> — Vestra settings\n👋 <#${CHANNELS.INTRODUCTIONS}> — Introductions\n🆘 <#${CHANNELS.HELP}> — Help Center`,
+          `# 🧭 Ashen Server Guide\n\n📍 <#${CHANNELS.START_HERE}> — Start here\n📜 <#${CHANNELS.RULES}> — Rules\n🌎 <#${CHANNELS.ONBOARDING}> — Onboarding\n✨ <#${CHANNELS.PREFERENCES}> — Vestra settings and Chaos Tyrant alerts\n👋 <#${CHANNELS.INTRODUCTIONS}> — Introductions\n🆘 <#${CHANNELS.HELP}> — Help Center`,
         flags: MessageFlags.Ephemeral
       });
     }
@@ -3888,7 +3888,7 @@ You can unlock additional language chats later in Role Preferences.`
           "🔔 Choose Your Alerts",
           `${TEXT[language].reminders}
 
-Choose **as many as you want**. This includes regular guild reminders plus Server Tournament and Nexus Tournament alerts. You can change these anytime.`
+Choose **as many as you want**, including **Chaos Tyrant Last Call** on non-Nexus Sundays, regular guild reminders, and Server/Nexus Tournament alerts. You can change these anytime.`
         ),
         embeds: [],
         components: [
@@ -4354,7 +4354,7 @@ Head into the server, say hi, and make yourself at home. 🖤`,
       const selected = Object.entries(REMINDERS).filter(([, item]) => member.roles.cache.has(item.role)).map(([key]) => key);
       const menu = new StringSelectMenuBuilder()
         .setCustomId("settings_reminders_select")
-        .setPlaceholder("Choose game alerts")
+        .setPlaceholder("Select guild alerts, including Chaos")
         .setMinValues(1)
         .setMaxValues(Object.keys(REMINDERS).length + 1)
         .addOptions(
@@ -4362,7 +4362,7 @@ Head into the server, say hi, and make yourself at home. 🖤`,
           { label: "No game pings", value: "none", emoji: "🔕", default: selected.length === 0 }
         );
       return interaction.update({
-        embeds: [new EmbedBuilder().setTitle("⏰ Game Reminder Pings").setDescription("Choose the events you want Vestra to notify you about.")],
+        embeds: [new EmbedBuilder().setTitle("⏰ Guild Reminder Pings").setDescription("Choose your alert roles, including **Chaos Tyrant Last Call**. Chaos alerts go out on non-Nexus Sundays, one hour before closing (8 PM standard / 9 PM daylight time). You'll receive them in your preferred language.")],
         components: [new ActionRowBuilder().addComponents(menu), backButtonRow()]
       });
     }
