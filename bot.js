@@ -2152,11 +2152,7 @@ async function handleSocialTranslationReaction(reaction, user) {
   }
 
   const requesterName = safeDisplayName(member, user);
-  const deleteAtUnix = Math.floor(
-    (Date.now() + SOCIAL_TRANSLATION_DELETE_MS) / 1000
-  );
-
-  const makeTranslationEmbed = temporary => {
+  const makeTranslationEmbed = (temporary, secondsRemaining = 30) => {
     const translationEmbed = new EmbedBuilder()
       .setAuthor({
         name: safeDisplayName(message.member, message.author),
@@ -2167,8 +2163,8 @@ async function handleSocialTranslationReaction(reaction, user) {
 
     if (temporary) {
       translationEmbed.addFields({
-        name: "⏳ Translation disappears",
-        value: `<t:${deleteAtUnix}:R> • <t:${deleteAtUnix}:T>`
+        name: "⏳ Translation disappears in",
+        value: secondsRemaining + (secondsRemaining === 1 ? " second" : " seconds")
       });
     }
 
@@ -2204,7 +2200,35 @@ async function handleSocialTranslationReaction(reaction, user) {
     return true;
   }
 
+  // Discord's <t:...:R> is not a seconds-resolution countdown.
+  // Update the same embed every second and delete it at the 30-second mark.
+  const expiresAtMs = Date.now() + SOCIAL_TRANSLATION_DELETE_MS;
+  let active = true;
+  let editInFlight = false;
+  let shownSeconds = 30;
+  const countdown = setInterval(() => {
+    if (!active || editInFlight) return;
+    const remaining = Math.max(0, Math.ceil((expiresAtMs - Date.now()) / 1000));
+    if (remaining < 1 || remaining === shownSeconds) return;
+
+    editInFlight = true;
+    void translatedReply.edit({ embeds: [makeTranslationEmbed(true, remaining)] })
+      .then(() => { shownSeconds = remaining; })
+      .catch(error => {
+        // If the message was removed or editing is no longer permitted,
+        // stop updating; the deletion timeout still handles cleanup.
+        console.warn("🌐 Translation countdown update failed:", error.message);
+        if (error.code === 10008 || error.code === 50013) {
+          active = false;
+          clearInterval(countdown);
+        }
+      })
+      .finally(() => { editInFlight = false; });
+  }, 1000);
+
   setTimeout(() => {
+    active = false;
+    clearInterval(countdown);
     void translatedReply.delete().catch(() => {});
   }, SOCIAL_TRANSLATION_DELETE_MS);
 
