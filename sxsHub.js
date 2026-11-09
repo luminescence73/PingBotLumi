@@ -1,14 +1,7 @@
-import {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  ChannelType,
-  EmbedBuilder
-} from "discord.js";
+import { ChannelType } from "discord.js";
 import { createHash } from "node:crypto";
 
 const TZ = "America/Chicago";
-const BRAND_COLOR = 0x363B41;
 const SXS_CATEGORY_MATCH = "SWORD X STAFF";
 const REFRESH_MS = 30 * 60 * 1000;
 
@@ -685,10 +678,11 @@ async function createHub({ client, remindersChannelId, staffRoles }) {
       return;
     }
 
-    if (hashes.get(def.key) !== hash) {
+    const existingHash = payloadHash({ content: existing.content || "" });
+    if (existingHash !== hash) {
       await existing.edit(payload);
-      hashes.set(def.key, hash);
     }
+    hashes.set(def.key, hash);
   }
 
   async function refresh({ ensure = false } = {}) {
