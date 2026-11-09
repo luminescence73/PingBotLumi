@@ -1264,94 +1264,9 @@ These records do not send extra role pings. Manage subscriptions in <#${CHANNELS
 }
 
 async function setupIntroductionPanel() {
-  const channel = await client.channels.fetch(CHANNELS.INTRODUCTIONS).catch(() => null);
-  if (!channel?.isTextBased() || !channel.messages?.fetch) return;
-
-  const content = `# ✦ ASHEN / INTRODUCTIONS
-**New members enter here.**
-
-Vestra announces completed inductions with each member's language, playstyle, and social preference.
-
-Welcome new recruits. Make them part of the guild.`;
-
-  // Find every old copy of the channel information post. Keep the oldest
-  // existing copy so it stays as high in channel history as Discord allows,
-  // then delete every replica and pin the canonical message.
-  const replicas = [];
-  let before;
-
-  while (true) {
-    const page = await channel.messages.fetch({
-      limit: 100,
-      ...(before ? { before } : {})
-    }).catch(() => null);
-
-    if (!page?.size) break;
-
-    for (const message of page.values()) {
-      if (message.author.id !== client.user.id) continue;
-
-      const text = [
-        message.content || "",
-        ...(message.embeds || []).flatMap(embed => [
-          embed.title || "",
-          embed.description || ""
-        ])
-      ].join("\n");
-
-      const isIntroPanel =
-        /new members enter here/i.test(text) ||
-        /vestra announces completed inductions/i.test(text) ||
-        /ashen\s*[\/|]\s*(?:introductions|roster)/i.test(text);
-
-      // Do not mistake member recruit cards for the channel information post.
-      const isRecruitCard =
-        /new recruit/i.test(text) ||
-        /new ashen warrior/i.test(text) ||
-        /welcome\s+<@!?\d+>/i.test(text);
-
-      if (isIntroPanel && !isRecruitCard) replicas.push(message);
-    }
-
-    before = page.last()?.id;
-    if (!before || page.size < 100) break;
-  }
-
-  replicas.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-
-  let canonical = replicas[0] || null;
-
-  if (canonical) {
-    await canonical.edit({
-      content,
-      embeds: [],
-      components: [],
-      allowedMentions: { parse: [] }
-    });
-  } else {
-    canonical = await channel.send({
-      content,
-      embeds: [],
-      components: [],
-      allowedMentions: { parse: [] }
-    });
-  }
-
-  for (const duplicate of replicas.slice(1)) {
-    await duplicate.delete().catch(error =>
-      console.warn(`⚠️ Could not delete duplicate introductions panel ${duplicate.id}: ${error.message}`)
-    );
-  }
-
-  await canonical.pin("Keep the Ashen introductions guide easy to find").catch(error =>
-    console.warn(`⚠️ Could not pin introductions guide: ${error.message}`)
-  );
-
-  await dbSetState("panel_introductions", { messageId: canonical.id });
-
-  console.log(
-    `✅ Introductions guide ready; ${Math.max(0, replicas.length - 1)} duplicate panel(s) removed.`
-  );
+  // The introductions channel is rebuilt in one controlled pass after startup
+  // so the guide can be physically first and duplicate recruit cards removed.
+  return true;
 }
 
 async function setupStaffRequestsPanel() {
@@ -1841,7 +1756,7 @@ async function createHelpThread(interaction, type, emoji, details) {
 }
 
 async function migrateLegacyIntroductions() {
-  const completionKey = "introductions_sol_card_migration_v1";
+  const completionKey = "introductions_full_rebuild_sol_v1";
   if ((await dbGetState(completionKey))?.completed) return;
 
   const channel = await client.channels.fetch(CHANNELS.INTRODUCTIONS).catch(() => null);
@@ -1849,31 +1764,27 @@ async function migrateLegacyIntroductions() {
 
   await channel.guild.members.fetch().catch(() => {});
 
-  let before;
-  let inspected = 0;
-  let converted = 0;
-  let failed = 0;
-  let skipped = 0;
-
   const clean = value => String(value || "").replace(/\*\*/g, "").trim();
+  const records = new Map();
+  const vestraIntroMessages = [];
 
   const fieldValue = (embed, label) =>
     clean((embed?.fields || []).find(field =>
       String(field.name || "").toLowerCase().includes(label)
     )?.value) || null;
 
-  const textValue = (content, label) => {
-    const line = String(content || "").split(/\r?\n/).find(row =>
-      new RegExp(label, "i").test(row)
+  const plainValue = (content, label) => {
+    const row = String(content || "").split(/\r?\n/).find(line =>
+      new RegExp(label, "i").test(line)
     );
-    if (!line) return null;
-    return clean(line)
+    if (!row) return null;
+    return clean(row)
       .replace(/^[^A-Za-z0-9@<]*/, "")
       .replace(new RegExp(`^${label}\\s*:?\\s*`, "i"), "")
       .trim() || null;
   };
 
-  const findMentionedMember = async message => {
+  const memberFromMessage = async message => {
     const direct = message.mentions?.members?.first?.();
     if (direct) return direct;
 
@@ -1883,32 +1794,36 @@ async function migrateLegacyIntroductions() {
       if (fetched) return fetched;
     }
 
-    const candidateNames = [];
+    const candidates = [];
     for (const embed of message.embeds || []) {
       const desc = clean(embed.description);
       const title = clean(embed.title);
-      const descName = desc.match(/^(.+?)\s+has completed/i)?.[1];
-      const welcomeName = title.match(/(?:WELCOME|NEW ASHEN WARRIOR).*?([A-Za-z0-9_.\-]+)/i)?.[1];
-      if (descName) candidateNames.push(descName);
-      if (welcomeName) candidateNames.push(welcomeName);
+      const fromDesc = desc.match(/^(.+?)\s+has completed/i)?.[1];
+      const fromTitle =
+        title.match(/welcome\s+(.+?)(?:!|$)/i)?.[1] ||
+        title.match(/new ashen warrior.*?([A-Za-z0-9_.\-]+)/i)?.[1];
+      if (fromDesc) candidates.push(fromDesc);
+      if (fromTitle) candidates.push(fromTitle);
     }
 
-    const plainWelcome = clean(message.content).match(/WELCOME\s+@?([^!\n]+)/i)?.[1];
-    if (plainWelcome) candidateNames.push(plainWelcome);
+    const plainWelcome = clean(message.content).match(/welcome\s+@?([^!\n]+)/i)?.[1];
+    if (plainWelcome) candidates.push(plainWelcome);
 
-    for (const raw of candidateNames) {
+    for (const raw of candidates) {
       const target = raw.replace(/^@/, "").trim().toLowerCase();
-      const match = channel.guild.members.cache.find(member =>
-        member.displayName.toLowerCase() === target ||
-        member.user.username.toLowerCase() === target ||
-        member.user.globalName?.toLowerCase() === target
+      const member = channel.guild.members.cache.find(m =>
+        m.displayName.toLowerCase() === target ||
+        m.user.username.toLowerCase() === target ||
+        m.user.globalName?.toLowerCase() === target
       );
-      if (match) return match;
+      if (member) return member;
     }
 
     return null;
   };
 
+  // Read the whole channel first so nothing is lost before deletion.
+  let before;
   while (true) {
     const page = await channel.messages.fetch({
       limit: 100,
@@ -1918,82 +1833,112 @@ async function migrateLegacyIntroductions() {
     if (!page?.size) break;
 
     for (const message of page.values()) {
-      inspected++;
       if (message.author.id !== client.user.id) continue;
 
-      // Keep the channel information panel untouched.
-      if (/ASHEN\s*\/\s*INTRODUCTIONS/i.test(message.content || "")) {
-        skipped++;
-        continue;
-      }
+      const combined = [
+        message.content || "",
+        ...(message.embeds || []).flatMap(embed => [
+          embed.title || "",
+          embed.description || "",
+          ...(embed.fields || []).flatMap(field => [field.name || "", field.value || ""])
+        ])
+      ].join("\n");
 
-      const introEmbed = (message.embeds || []).find(embed => {
-        const fields = (embed.fields || []).map(field =>
-          String(field.name || "").toLowerCase()
+      const isGuide =
+        /new members enter here/i.test(combined) ||
+        /vestra announces completed inductions/i.test(combined) ||
+        /ashen\s*[\/|]\s*(?:introductions|roster)/i.test(combined);
+
+      const hasThreeFields =
+        /language/i.test(combined) &&
+        /playstyle/i.test(combined) &&
+        /social/i.test(combined);
+
+      const isRecruit =
+        !isGuide &&
+        (
+          /new recruit/i.test(combined) ||
+          /new ashen warrior/i.test(combined) ||
+          /welcome\s+/i.test(combined) ||
+          hasThreeFields
         );
-        return (
-          /new recruit|new ashen warrior|welcome/i.test(embed.title || "") ||
-          (
-            fields.some(name => name.includes("language")) &&
-            fields.some(name => name.includes("playstyle")) &&
-            fields.some(name => name.includes("social"))
-          )
-        );
-      });
 
-      const looksLikePlainIntro =
-        /language\s*:/i.test(message.content || "") &&
-        /playstyle\s*:/i.test(message.content || "") &&
-        /social\s*:/i.test(message.content || "");
+      if (!isGuide && !isRecruit) continue;
+      vestraIntroMessages.push(message);
+      if (!isRecruit) continue;
 
-      if (!introEmbed && !looksLikePlainIntro) {
-        skipped++;
-        continue;
-      }
+      const member = await memberFromMessage(message);
+      const embed = (message.embeds || []).find(e => {
+        const text = [e.title || "", e.description || "", ...(e.fields || []).map(f => f.name || "")].join(" ");
+        return /new recruit|new ashen warrior|welcome|language|playstyle|social/i.test(text);
+      }) || null;
 
-      const member = await findMentionedMember(message);
-      if (!member) {
-        skipped++;
-        console.warn(`⚠️ Could not match introduction ${message.id} to a current member.`);
-        continue;
-      }
+      const memberId = member?.id || message.content?.match(/<@!?(\d+)>/)?.[1] || null;
+      const displayName =
+        member?.displayName ||
+        clean(embed?.description).match(/^(.+?)\s+has completed/i)?.[1] ||
+        clean(embed?.title).match(/welcome\s+(.+?)(?:!|$)/i)?.[1] ||
+        "Former Member";
+
+      const avatarURL =
+        member?.user?.displayAvatarURL?.({ size: 256 }) ||
+        embed?.thumbnail?.url ||
+        null;
 
       const language =
-        fieldValue(introEmbed, "language") ||
-        textValue(message.content, "language") ||
-        LANGUAGE_CHANNELS[await inferPrimaryLanguage(member)]?.name ||
-        "Not specified";
-
+        member
+          ? LANGUAGE_CHANNELS[await inferPrimaryLanguage(member)]?.name
+          : null;
       const playstyle =
-        fieldValue(introEmbed, "playstyle") ||
-        textValue(message.content, "playstyle") ||
-        Object.values(PLAYSTYLE).find(item => member.roles.cache.has(item.role))?.name ||
-        "Not specified";
-
+        member
+          ? Object.values(PLAYSTYLE).find(item => member.roles.cache.has(item.role))?.name
+          : null;
       const social =
-        fieldValue(introEmbed, "social") ||
-        textValue(message.content, "social") ||
-        Object.values(SOCIAL).find(item => member.roles.cache.has(item.role))?.name ||
+        member
+          ? Object.values(SOCIAL).find(item => member.roles.cache.has(item.role))?.name
+          : null;
+
+      const sourceLanguage =
+        fieldValue(embed, "language") ||
+        plainValue(message.content, "language") ||
+        "Not specified";
+      const sourcePlaystyle =
+        fieldValue(embed, "playstyle") ||
+        plainValue(message.content, "playstyle") ||
+        "Not specified";
+      const sourceSocial =
+        fieldValue(embed, "social") ||
+        plainValue(message.content, "social") ||
         "Not specified";
 
-      const card = welcomeCard(
-        member,
-        language,
-        playstyle,
-        social,
-        message.createdAt
-      );
+      // If we cannot identify a member ID, use the normalized display name to
+      // still dedupe repeated historic cards for the same former member.
+      const key = memberId || `name:${displayName.toLowerCase()}`;
+      const existing = records.get(key);
 
-      try {
-        await message.edit({
-          content: `<@${member.id}>`,
-          embeds: [card],
-          allowedMentions: { parse: [] }
+      const candidate = {
+        member,
+        memberId,
+        displayName,
+        avatarURL,
+        language: language || sourceLanguage,
+        playstyle: playstyle || sourcePlaystyle,
+        social: social || sourceSocial,
+        firstTimestamp: existing
+          ? Math.min(existing.firstTimestamp, message.createdTimestamp)
+          : message.createdTimestamp,
+        latestTimestamp: message.createdTimestamp
+      };
+
+      // Current role data wins for active members; otherwise use the newest
+      // historic card while preserving the person's earliest intro date.
+      if (!existing || message.createdTimestamp >= existing.latestTimestamp || member) {
+        records.set(key, {
+          ...candidate,
+          firstTimestamp: existing
+            ? Math.min(existing.firstTimestamp, message.createdTimestamp)
+            : message.createdTimestamp
         });
-        converted++;
-      } catch (error) {
-        failed++;
-        console.error(`❌ Could not standardize introduction ${message.id}: ${error.message}`);
       }
     }
 
@@ -2001,17 +1946,64 @@ async function migrateLegacyIntroductions() {
     if (!before || page.size < 100) break;
   }
 
-  if (failed === 0) {
-    await dbSetState(completionKey, {
-      completed: true,
-      inspected,
-      converted,
-      skipped
-    });
+  // Remove every old Vestra guide/recruit message so there can be no replicas.
+  for (const message of vestraIntroMessages) {
+    await message.delete().catch(error =>
+      console.warn(`⚠️ Could not delete old introduction ${message.id}: ${error.message}`)
+    );
   }
 
+  // Post the guide FIRST so it is physically above every rebuilt Vestra card.
+  const guideContent = `# ✦ ASHEN / INTRODUCTIONS
+**New members enter here.**
+
+Vestra announces completed inductions with each member's language, playstyle, and social preference.
+
+Welcome new recruits. Make them part of the guild.`;
+
+  const guide = await channel.send({
+    content: guideContent,
+    embeds: [],
+    allowedMentions: { parse: [] }
+  });
+
+  await guide.pin("Keep the Ashen introductions guide easy to find").catch(() => {});
+  await dbSetState("panel_introductions", { messageId: guide.id });
+
+  const ordered = [...records.values()].sort(
+    (a, b) => a.firstTimestamp - b.firstTimestamp
+  );
+
+  let rebuilt = 0;
+  for (const record of ordered) {
+    const card = welcomeCardFromData(
+      record.displayName,
+      record.avatarURL,
+      record.language,
+      record.playstyle,
+      record.social,
+      new Date(record.firstTimestamp)
+    );
+
+    await channel.send({
+      content: record.memberId ? `<@${record.memberId}>` : `**${record.displayName}**`,
+      embeds: [card],
+      allowedMentions: { parse: [] }
+    }).then(() => {
+      rebuilt++;
+    }).catch(error =>
+      console.error(`❌ Could not rebuild intro for ${record.displayName}: ${error.message}`)
+    );
+  }
+
+  await dbSetState(completionKey, {
+    completed: true,
+    oldMessagesRemoved: vestraIntroMessages.length,
+    uniqueCardsRebuilt: rebuilt
+  });
+
   console.log(
-    `✅ Introduction card sync: ${converted} standardized, ${failed} failed, ${skipped} skipped, ${inspected} scanned.`
+    `✅ Introductions rebuilt: guide first, ${vestraIntroMessages.length} old Vestra intro message(s) removed, ${rebuilt} unique recruit card(s) recreated.`
   );
 }
 
@@ -2019,19 +2011,32 @@ async function migrateLegacyIntroductions() {
 // WELCOME / MEMBER CARDS
 // =====================================================
 
-function welcomeCard(member, languageName, playstyleName, socialName, timestamp = new Date()) {
-  return brandEmbed(
+function welcomeCardFromData(displayName, avatarURL, languageName, playstyleName, socialName, timestamp = new Date()) {
+  const card = brandEmbed(
     "ASHEN | NEW RECRUIT",
-    `**${member.displayName}** has completed induction and joined the ranks.`
+    `**${displayName}** has completed induction and joined the ranks.`
   )
-    .setThumbnail(member.user.displayAvatarURL({ size: 256 }))
     .addFields(
-      { name: "Language", value: languageName, inline: true },
-      { name: "Playstyle", value: playstyleName, inline: true },
-      { name: "Social", value: socialName, inline: true }
+      { name: "Language", value: languageName || "Not specified", inline: true },
+      { name: "Playstyle", value: playstyleName || "Not specified", inline: true },
+      { name: "Social", value: socialName || "Not specified", inline: true }
     )
     .setFooter({ text: "Vestra | Ashen Roster" })
     .setTimestamp(timestamp);
+
+  if (avatarURL) card.setThumbnail(avatarURL);
+  return card;
+}
+
+function welcomeCard(member, languageName, playstyleName, socialName, timestamp = new Date()) {
+  return welcomeCardFromData(
+    member.displayName,
+    member.user.displayAvatarURL({ size: 256 }),
+    languageName,
+    playstyleName,
+    socialName,
+    timestamp
+  );
 }
 
 async function memberCardEmbed(member) {
