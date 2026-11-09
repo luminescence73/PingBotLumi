@@ -3549,7 +3549,7 @@ async function organizeAshenSidebar(guildOverride = null) {
     ] },
     { name: "✧ SWORD X STAFF | INTEL", existing: ["SWORD X STAFF | INTEL"], channels: [
       "seasonal-info", "sxs-roadmap", "weekly-rotation", "ingredient-maps",
-      "sxs-resources", "gift-codes", "builds-and-guides", "sxs-database", "updates-and-news"
+      "spare-ingredients", "gift-codes", "builds-and-guides", "sxs-database", "updates-and-news"
     ] },
     { name: "◇ ASHEN | COMMUNITY", existing: ["ASHEN | COMMUNITY"], channels: [
       "highlights", "community-highlights", "suggestions", "help-and-requests"
@@ -3646,6 +3646,7 @@ async function organizeAshenSidebar(guildOverride = null) {
   };
   await renameLegacy("ashen-showcase", "community-highlights");
   await renameLegacy("sxs-announcements", "guild-pings");
+  await renameLegacy("sxs-resources", "spare-ingredients");
   await renameLegacy("ashen-announcements", "staff-announcements");
   await renameLegacy("movies-shows", "movies-and-shows");
   await renameLegacy("random-topics", "rando-topics");
