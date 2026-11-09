@@ -1765,21 +1765,73 @@ async function createHelpThread(interaction, type, emoji, details) {
 }
 
 async function migrateLegacyIntroductions() {
-  const completionKey = "introductions_plaintext_migration_v1";
+  const completionKey = "introductions_sol_card_migration_v1";
   if ((await dbGetState(completionKey))?.completed) return;
 
   const channel = await client.channels.fetch(CHANNELS.INTRODUCTIONS).catch(() => null);
   if (!channel?.isTextBased() || !channel.messages?.fetch) return;
 
+  await channel.guild.members.fetch().catch(() => {});
+
   let before;
   let inspected = 0;
   let converted = 0;
   let failed = 0;
+  let skipped = 0;
+
+  const clean = value => String(value || "").replace(/\*\*/g, "").trim();
 
   const fieldValue = (embed, label) =>
-    (embed?.fields || []).find(field =>
+    clean((embed?.fields || []).find(field =>
       String(field.name || "").toLowerCase().includes(label)
-    )?.value || "Not specified";
+    )?.value) || null;
+
+  const textValue = (content, label) => {
+    const line = String(content || "").split(/\r?\n/).find(row =>
+      new RegExp(label, "i").test(row)
+    );
+    if (!line) return null;
+    return clean(line)
+      .replace(/^[^A-Za-z0-9@<]*/, "")
+      .replace(new RegExp(`^${label}\\s*:?\\s*`, "i"), "")
+      .trim() || null;
+  };
+
+  const findMentionedMember = async message => {
+    const direct = message.mentions?.members?.first?.();
+    if (direct) return direct;
+
+    const id = message.content?.match(/<@!?(\d+)>/)?.[1];
+    if (id) {
+      const fetched = await channel.guild.members.fetch(id).catch(() => null);
+      if (fetched) return fetched;
+    }
+
+    const candidateNames = [];
+    for (const embed of message.embeds || []) {
+      const desc = clean(embed.description);
+      const title = clean(embed.title);
+      const descName = desc.match(/^(.+?)\s+has completed/i)?.[1];
+      const welcomeName = title.match(/(?:WELCOME|NEW ASHEN WARRIOR).*?([A-Za-z0-9_.\-]+)/i)?.[1];
+      if (descName) candidateNames.push(descName);
+      if (welcomeName) candidateNames.push(welcomeName);
+    }
+
+    const plainWelcome = clean(message.content).match(/WELCOME\s+@?([^!\n]+)/i)?.[1];
+    if (plainWelcome) candidateNames.push(plainWelcome);
+
+    for (const raw of candidateNames) {
+      const target = raw.replace(/^@/, "").trim().toLowerCase();
+      const match = channel.guild.members.cache.find(member =>
+        member.displayName.toLowerCase() === target ||
+        member.user.username.toLowerCase() === target ||
+        member.user.globalName?.toLowerCase() === target
+      );
+      if (match) return match;
+    }
+
+    return null;
+  };
 
   while (true) {
     const page = await channel.messages.fetch({
@@ -1792,61 +1844,80 @@ async function migrateLegacyIntroductions() {
     for (const message of page.values()) {
       inspected++;
       if (message.author.id !== client.user.id) continue;
-      if (message.content?.includes("# ✦ ASHEN / INTRODUCTIONS")) continue;
 
-      let language = null;
-      let playstyle = null;
-      let social = null;
-      let memberLine = null;
-
-      const oldEmbed = message.embeds?.find(embed =>
-        /NEW RECRUIT/i.test(embed.title || "")
-      );
-
-      if (oldEmbed) {
-        language = fieldValue(oldEmbed, "language");
-        playstyle = fieldValue(oldEmbed, "playstyle");
-        social = fieldValue(oldEmbed, "social");
-
-        memberLine =
-          message.content?.match(/<@!?\d+>/)?.[0] ||
-          (oldEmbed.description
-            ? oldEmbed.description.replace(/^\*\*|\*\*$/g, "").trim()
-            : null) ||
-          "A new member";
-      } else if (/NEW RECRUIT/i.test(message.content || "")) {
-        language = message.content.match(/(?:🌐\s*)?\*\*Language:\*\*\s*(.+)/i)?.[1]?.trim() || "Not specified";
-        playstyle = message.content.match(/(?:⚔\s*)?\*\*Playstyle:\*\*\s*(.+)/i)?.[1]?.trim() || "Not specified";
-        social = message.content.match(/(?:💬\s*)?\*\*Social:\*\*\s*(.+)/i)?.[1]?.trim() || "Not specified";
-        memberLine =
-          message.content.match(/<@!?\d+>/)?.[0] ||
-          message.content.split("\n").find(line => /joined Ashen Warriors/i.test(line))?.replace(/ has completed.*$/i, "").trim() ||
-          "A new member";
-      } else {
+      // Keep the channel information panel untouched.
+      if (/ASHEN\s*\/\s*INTRODUCTIONS/i.test(message.content || "")) {
+        skipped++;
         continue;
       }
 
-      const content = [
-        "# ✦ VESTRA / NEW RECRUIT",
-        `${memberLine} has completed onboarding and joined Ashen Warriors.`,
-        "",
-        `🌐 **Language:** ${language}`,
-        `⚔ **Playstyle:** ${playstyle}`,
-        `💬 **Social:** ${social}`
-      ].join("\n");
+      const introEmbed = (message.embeds || []).find(embed => {
+        const fields = (embed.fields || []).map(field =>
+          String(field.name || "").toLowerCase()
+        );
+        return (
+          /new recruit|new ashen warrior|welcome/i.test(embed.title || "") ||
+          (
+            fields.some(name => name.includes("language")) &&
+            fields.some(name => name.includes("playstyle")) &&
+            fields.some(name => name.includes("social"))
+          )
+        );
+      });
 
-      if (message.content === content && !message.embeds?.length) continue;
+      const looksLikePlainIntro =
+        /language\s*:/i.test(message.content || "") &&
+        /playstyle\s*:/i.test(message.content || "") &&
+        /social\s*:/i.test(message.content || "");
+
+      if (!introEmbed && !looksLikePlainIntro) {
+        skipped++;
+        continue;
+      }
+
+      const member = await findMentionedMember(message);
+      if (!member) {
+        skipped++;
+        console.warn(`⚠️ Could not match introduction ${message.id} to a current member.`);
+        continue;
+      }
+
+      const language =
+        fieldValue(introEmbed, "language") ||
+        textValue(message.content, "language") ||
+        LANGUAGE_CHANNELS[await inferPrimaryLanguage(member)]?.name ||
+        "Not specified";
+
+      const playstyle =
+        fieldValue(introEmbed, "playstyle") ||
+        textValue(message.content, "playstyle") ||
+        Object.values(PLAYSTYLE).find(item => member.roles.cache.has(item.role))?.name ||
+        "Not specified";
+
+      const social =
+        fieldValue(introEmbed, "social") ||
+        textValue(message.content, "social") ||
+        Object.values(SOCIAL).find(item => member.roles.cache.has(item.role))?.name ||
+        "Not specified";
+
+      const card = welcomeCard(
+        member,
+        language,
+        playstyle,
+        social,
+        message.createdAt
+      );
 
       try {
         await message.edit({
-          content,
-          embeds: [],
+          content: `<@${member.id}>`,
+          embeds: [card],
           allowedMentions: { parse: [] }
         });
         converted++;
       } catch (error) {
         failed++;
-        console.error(`❌ Could not convert introduction message ${message.id}: ${error.message}`);
+        console.error(`❌ Could not standardize introduction ${message.id}: ${error.message}`);
       }
     }
 
@@ -1855,17 +1926,24 @@ async function migrateLegacyIntroductions() {
   }
 
   if (failed === 0) {
-    await dbSetState(completionKey, { completed: true, inspected, converted });
+    await dbSetState(completionKey, {
+      completed: true,
+      inspected,
+      converted,
+      skipped
+    });
   }
 
-  console.log(`✅ Introduction cleanup: ${converted} converted, ${failed} failed, ${inspected} scanned.`);
+  console.log(
+    `✅ Introduction card sync: ${converted} standardized, ${failed} failed, ${skipped} skipped, ${inspected} scanned.`
+  );
 }
 
 // =====================================================
 // WELCOME / MEMBER CARDS
 // =====================================================
 
-function welcomeCard(member, languageName, playstyleName, socialName) {
+function welcomeCard(member, languageName, playstyleName, socialName, timestamp = new Date()) {
   return brandEmbed(
     "ASHEN | NEW RECRUIT",
     `**${member.displayName}** has completed induction and joined the ranks.`
@@ -1877,7 +1955,7 @@ function welcomeCard(member, languageName, playstyleName, socialName) {
       { name: "Social", value: socialName, inline: true }
     )
     .setFooter({ text: "Vestra | Ashen Roster" })
-    .setTimestamp();
+    .setTimestamp(timestamp);
 }
 
 async function memberCardEmbed(member) {
@@ -5093,16 +5171,15 @@ client.on(Events.InteractionCreate, async interaction => {
         intro?.isTextBased()
       ) {
         await intro.send({
-          content: [
-            "# ✦ VESTRA / NEW RECRUIT",
-            `${member} has completed onboarding and joined Ashen Warriors.`,
-            "",
-            `🌐 **Language:** ${LANGUAGES[session.language].name}`,
-            `⚔ **Playstyle:** ${session.playstyle ? PLAYSTYLE[session.playstyle].name : "Not specified"}`,
-            `💬 **Social:** ${session.social ? SOCIAL[session.social].name : "Not specified"}`
-          ].join("\n"),
-          embeds: [],
-
+          content: `${member}`,
+          embeds: [
+            welcomeCard(
+              member,
+              LANGUAGES[session.language].name,
+              session.playstyle ? PLAYSTYLE[session.playstyle].name : "Not specified",
+              session.social ? SOCIAL[session.social].name : "Not specified"
+            )
+          ],
           allowedMentions: {
             parse: [],
             users: [
