@@ -417,14 +417,15 @@ function plainBoard(title, sections, sourceUrl, stale = false) {
     ...sections.filter(Boolean),
     "",
     stale ? "_Showing the last confirmed SxS information._" : "_Updated automatically by Vestra when the information changes._",
-    sourceUrl ? `Source: <${sourceUrl}>` : null
+    sourceUrl ? `**Reference:** [Open source](${sourceUrl})` : null
   ].filter(Boolean).join("\n");
 
   return {
     content: truncate(body, 1990),
     embeds: [],
     components: [],
-    allowedMentions: { parse: [] }
+    allowedMentions: { parse: [] },
+    flags: 4
   };
 }
 
@@ -486,15 +487,23 @@ function buildPayloads(data, stale = false) {
     stale
   );
 
+  const formatRewards = value => String(value || "")
+    .replace(/(\S)(?=\d[\d,]*x\s)/g, "$1 · ")
+    .replace(/\s*·\s*/g, " · ")
+    .trim();
   const codeLines = data.codes
-    .slice(0, 20)
-    .map(item => `**${item.code}** — ${item.reward}`);
+    .slice(0, 12)
+    .map(item => `**${item.code}**\n${truncate(formatRewards(item.reward), 100)}`);
+  const extraCodes = data.codes.length > 12
+    ? `\n${data.codes.length - 12} more codes: [View full list](${SOURCE.codes})`
+    : null;
 
   const codes = plainBoard(
     "SWORD X STAFF | GIFT CODES",
     [
-      codeLines.length ? codeLines.join("\n") : "No active/permanent gift codes were detected.",
-      "\nRedeem: Main Menu > User Center > Gift Code"
+      codeLines.length ? codeLines.join("\n\n") : "No codes currently listed.",
+      extraCodes,
+      "\n**Redeem:** Main Menu → User Center → Gift Code"
     ],
     SOURCE.codes,
     stale
@@ -523,23 +532,26 @@ function buildPayloads(data, stale = false) {
       `**Current Progression:** Season ${seasonNumber} • ${region}${tier ? ` • T${tier}` : ""}`,
       data.season.classes ? `\n**Current Class Paths**\n${truncate(data.season.classes, 900)}` : null,
       "\nClass builds: <https://www.valkyrie.tips/builds/curated>",
-      "Guides: <https://www.valkyrie.tips/guides>"
+      "[Browse guides](https://www.valkyrie.tips/guides)"
     ],
     SOURCE.builds,
     stale
   );
 
-  const newsLines = data.home.news.map(item => {
+  const newsLines = data.home.news.slice(0, 4).map(item => {
     const url = externalUrl(item.href);
-    return url ? `• ${truncate(item.label, 160)}\n  <${url}>` : `• ${truncate(item.label, 180)}`;
+    const title = truncate(item.label.replace(/\s+/g, " ").trim(), 140);
+    return url ? `• [${title}](${url})` : `• ${title}`;
   });
 
   const news = plainBoard(
     "SWORD X STAFF | UPDATES & NEWS",
     [
+      "**Latest announcements**",
       newsLines.length
         ? newsLines.join("\n\n")
-        : "No recent official-news links were detected. Open the live SxS feed for the latest posts."
+        : "No recent official announcements detected.",
+      "\nOlder announcements are available through the source below."
     ],
     SOURCE.home,
     stale
