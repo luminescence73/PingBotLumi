@@ -1273,10 +1273,20 @@ Keep all member information confidential. Vestra notifies leadership when a new 
 }
 
 function getAshenMembersChannel(guild) {
-  // Target the showcase only, not the similarly named guild directory.
+  // Public showcase/community highlights channel. Keep thread automation here.
   return guild?.channels?.cache?.find(
     ch => ch.type === ChannelType.GuildText &&
-      (ch.name.toLowerCase().includes("ashen-members") || ch.name.toLowerCase().includes("ashen-showcase"))
+      (
+        ch.name.toLowerCase().includes("community-highlights") ||
+        ch.name.toLowerCase().includes("ashen-showcase") ||
+        ch.name.toLowerCase().includes("ashen-members")
+      )
+  ) || null;
+}
+
+function getGuildMembersDirectoryChannel(guild) {
+  return guild?.channels?.cache?.find(
+    ch => ch.type === ChannelType.GuildText && ch.name === "guild-members"
   ) || null;
 }
 
@@ -1551,7 +1561,7 @@ async function ensureAshenMembersDiscussion(message) {
 async function setupGuildMembersPanel() {
   const guild = getGuild();
   if (!guild) return;
-  const channel = getAshenMembersChannel(guild);
+  const channel = getGuildMembersDirectoryChannel(guild);
   if (!channel) return;
 
   await guild.members.fetch().catch(() => {});
@@ -1561,22 +1571,13 @@ async function setupGuildMembersPanel() {
     member => member.roles.cache.has(ONBOARDING_COMPLETE)
   ).size;
 
-  const content = `# ASHEN / SHOWCASE
-**Official guild showcase.**
+  const content = `# ASHEN / GUILD MEMBERS
+**Private staff directory.**
 
-**POSTING**
-Only Ashen staff may publish artwork, battle records, event graphics, achievements, or guild highlights. Members may view and react.
-
-**DISCUSSION**
-Vestra creates a thread for each staff post. All replies belong in that thread.
-
-**CREDITS**
-Credit the original creator using "Credits to @artist" or "Art by @artist" in the caption. Vestra records the credit alongside the post details.
-
-**ROSTER**
+**CURRENT ROSTER**
 ${humanMembers.size} members · ${staffCount} staff · ${onboardedCount} inducted
 
-Use the profile button to view your Vestra settings and roles.`;
+Use this channel for staff-side member reference and Vestra profile access. Community showcase posts remain in #community-highlights.`
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("settings_card")
@@ -1586,7 +1587,7 @@ Use the profile button to view your Vestra settings and roles.`;
   await upsertBotPanel(
     channel, "panel_guild_members",
     { content, embeds: [], components: [row] },
-    "# ASHEN / SHOWCASE"
+    "# ASHEN / GUILD MEMBERS"
   );
 }
 
@@ -3489,28 +3490,26 @@ async function organizeAshenSidebar(guildOverride = null) {
 
   const definitions = [
     { name: "✧ ASHEN | WELCOME", existing: ["ASHEN | ENTRY", "ASHEN | WELCOME"], channels: [
-      "start-here", "announcements", "server-guide", "introductions",
-      "entry", "code", "induction"
+      "start-here", "announcements", "server-guide", "onboarding", "introductions", "vestra-settings"
     ] },
     { name: "◇ ASHEN | COMMONS", existing: ["ASHEN | COMMONS"], channels: [
-      "general", "media", "memes", "movies-and-shows", "movies-shows",
-      "other-games", "food", "music", "rando-topics", "random-topics", "travel"
+      "general", "media", "memes", "movies-and-shows", "other-games",
+      "food", "music", "rando-topics", "travel"
     ] },
     { name: "✦ SWORD X STAFF | GUILD", existing: ["SWORD X STAFF | OPERATIONS", "SWORD X STAFF | GUILD"], channels: [
       "sxs-event-board", "war-board", "guild-pings", "sxs-media",
-      "general-en", "general-es", "general-fr", "general-de",
-      "general-pt", "general-ja", "sxs-resources"
+      "general-en", "general-es", "general-fr", "general-de", "general-pt", "general-ja"
     ] },
     { name: "✧ SWORD X STAFF | INTEL", existing: ["SWORD X STAFF | INTEL"], channels: [
       "seasonal-info", "sxs-roadmap", "weekly-rotation", "ingredient-maps",
-      "gift-codes", "builds-and-guides", "sxs-database", "updates-and-news"
+      "sxs-resources", "gift-codes", "builds-and-guides", "sxs-database", "updates-and-news"
     ] },
     { name: "◇ ASHEN | COMMUNITY", existing: ["ASHEN | COMMUNITY"], channels: [
-      "highlights", "community-highlights", "ashen-showcase", "suggestions", "help-and-requests", "support", "command-requests", "roster", "vestra-settings"
+      "highlights", "community-highlights", "suggestions", "help-and-requests"
     ] },
     { name: "⚔ ASHEN | COMMAND", existing: ["ASHEN | COMMAND", "ASHEN INFO"], channels: [
-      "staff-chat", "staff-requests", "guild-members", "guild-ping-log", "bot-logs",
-      "ashen-announcements", "sxs-announcements", "alert-history"
+      "staff-chat", "staff-announcements", "staff-requests",
+      "guild-members", "guild-ping-log", "bot-logs"
     ] },
     { name: "⌁ ASHEN | VOICE", existing: ["ASHEN | VOICE"], channels: [] }
   ];
@@ -3567,7 +3566,89 @@ async function organizeAshenSidebar(guildOverride = null) {
         (ch.name.includes(" · ") || ch.name.includes("•") || ch.name.includes("・")))
     ));
 
-  // Move only named existing channels; preserve per-channel overwrites.
+  // Map Vestra's legacy channel names onto the original Ashen layout.
+  // IDs are used wherever Vestra already has a hard dependency so renaming
+  // never disconnects onboarding, settings, alerts, requests, or highlights.
+  const renameById = [
+    [CHANNELS.START_HERE, "start-here"],
+    [CHANNELS.RULES, "server-guide"],
+    [CHANNELS.ONBOARDING, "onboarding"],
+    [CHANNELS.HELP, "help-and-requests"],
+    [CHANNELS.INTRODUCTIONS, "introductions"],
+    [CHANNELS.PREFERENCES, "vestra-settings"],
+    [CHANNELS.STAFF_REQUESTS, "staff-requests"],
+    [CHANNELS.REMINDERS, "guild-ping-log"],
+    [CHANNELS.HIGHLIGHTS, "highlights"],
+    [CHANNELS.EVENT_BOARD, "sxs-event-board"]
+  ];
+  for (const [id, targetName] of renameById) {
+    const channel = guild.channels.cache.get(id);
+    if (channel?.type === ChannelType.GuildText && channel.name !== targetName) {
+      await attempt(`rename #${channel.name} → #${targetName}`,
+        () => channel.setName(targetName, "Match approved Ashen layout"));
+    }
+  }
+
+  const renameLegacy = async (legacyName, targetName) => {
+    if (byName(targetName)) return byName(targetName);
+    const legacy = byName(legacyName);
+    if (!legacy) return null;
+    await attempt(`rename #${legacy.name} → #${targetName}`,
+      () => legacy.setName(targetName, "Match approved Ashen layout"));
+    return legacy;
+  };
+  await renameLegacy("ashen-showcase", "community-highlights");
+  await renameLegacy("sxs-announcements", "guild-pings");
+  await renameLegacy("ashen-announcements", "staff-announcements");
+  await renameLegacy("movies-shows", "movies-and-shows");
+  await renameLegacy("random-topics", "rando-topics");
+
+  // Create only channels that genuinely do not already have a legacy equivalent.
+  // New channels inherit the destination category permissions.
+  const ensureTextChannel = async (name, parent, topic) => {
+    let channel = byName(name);
+    if (!channel) {
+      channel = await attempt(`create #${name}`, () => guild.channels.create({
+        name,
+        type: ChannelType.GuildText,
+        parent: parent.id,
+        topic,
+        reason: "Add missing channel from approved Ashen layout"
+      }));
+      if (channel) {
+        await attempt(`sync #${name} permissions`, () => channel.lockPermissions());
+      }
+    }
+    return channel;
+  };
+
+  await ensureTextChannel(
+    "suggestions",
+    categoryFor.get("◇ ASHEN | COMMUNITY"),
+    "Share suggestions and ideas for Ashen Warriors. Keep feedback constructive and specific."
+  );
+  await ensureTextChannel(
+    "staff-chat",
+    categoryFor.get("⚔ ASHEN | COMMAND"),
+    "Private Ashen staff discussion and coordination."
+  );
+  await ensureTextChannel(
+    "guild-members",
+    categoryFor.get("⚔ ASHEN | COMMAND"),
+    "Private guild member directory maintained by Vestra."
+  );
+  await ensureTextChannel(
+    "bot-logs",
+    categoryFor.get("⚔ ASHEN | COMMAND"),
+    "Private Vestra operations and troubleshooting channel."
+  );
+  await ensureTextChannel(
+    "guild-pings",
+    categoryFor.get("✦ SWORD X STAFF | GUILD"),
+    "Sword x Staff guild alerts and time-sensitive event notices."
+  );
+
+  // Move channels into the approved categories.
   for (const def of definitions) {
     const parent = categoryFor.get(def.name);
     for (const name of def.channels) {
@@ -3576,8 +3657,11 @@ async function organizeAshenSidebar(guildOverride = null) {
       if (channel.parentId !== parent.id) {
         await attempt(`move ${channel.name}`, () => channel.setParent(parent.id, {
           lockPermissions: false,
-          reason: "Approved Ashen sidebar organization; retain channel permissions"
+          reason: "Approved Ashen sidebar organization"
         }));
+      }
+      if (def.name === "⚔ ASHEN | COMMAND") {
+        await attempt(`secure #${channel.name}`, () => channel.lockPermissions());
       }
     }
   }
