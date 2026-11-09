@@ -47,6 +47,11 @@ const CHANNEL_DEFS = [
     topic: "Sword x Staff class builds, progression guides, and season-aware reference links."
   },
   {
+    key: "maps",
+    name: "ingredient-maps",
+    topic: "Sword x Staff gathering maps for ingredients, rare plants, epic ingredients, and gem nodes by kingdom."
+  },
+  {
     key: "news",
     name: "updates-and-news",
     topic: "Latest official Sword x Staff announcements and game news, collected into one clean live board."
@@ -556,7 +561,23 @@ function buildPayloads(data, stale = false) {
     stale
   );
 
-  return { seasonal, weekly, roadmap, codes, database, builds, news };
+  const maps = plainBoard(
+    "SWORD X STAFF | INGREDIENT MAPS",
+    [
+      "Find ingredient gathering spots across the kingdoms without searching every area manually.",
+      "\n**Ingredient & Gem Gathering Map**",
+      "Shows ingredient and gem respawn grids by kingdom, with filters for gathering types.",
+      "[Open gathering map](https://www.purrwikimania.com/es/gathering-map)",
+      "\n**World Map & Resource Locations**",
+      "Explore ingredient spots, treasure chests, portals, and other resource markers.",
+      "[Open Sword x Staff Compass](https://swordxstaff-compass.com/)",
+      "\n**Tip:** Filter for the ingredients you need, then check nearby gathering spots and respawn information. Map coverage can change as new regions are added."
+    ],
+    null,
+    false
+  );
+
+  return { seasonal, weekly, roadmap, codes, database, builds, maps, news };
 }
 
 function buildUnavailablePayload(def) {
