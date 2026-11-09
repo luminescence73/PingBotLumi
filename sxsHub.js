@@ -562,16 +562,19 @@ function buildPayloads(data, stale = false) {
   );
 
   const maps = plainBoard(
-    "SWORD X STAFF | INGREDIENT MAPS",
+    "SWORD X STAFF | INGREDIENT MAPS BY REGION",
     [
-      "Find ingredient gathering spots across the kingdoms without searching every area manually.",
-      "\n**Ingredient & Gem Gathering Map**",
-      "Shows ingredient and gem respawn grids by kingdom, with filters for gathering types.",
-      "[Open gathering map](https://www.purrwikimania.com/es/gathering-map)",
-      "\n**World Map & Resource Locations**",
-      "Explore ingredient spots, treasure chests, portals, and other resource markers.",
-      "[Open Sword x Staff Compass](https://swordxstaff-compass.com/)",
-      "\n**Tip:** Filter for the ingredients you need, then check nearby gathering spots and respawn information. Map coverage can change as new regions are added."
+      "Select your kingdom in the gathering map, then filter for rare ingredients, epic ingredients, or gem nodes.",
+      "\n**Season 1 — Verdantglade**\n[View ingredient locations](https://www.purrwikimania.com/es/gathering-map)",
+      "\n**Season 1 — Cinder Ridge**\n[View ingredient locations](https://www.purrwikimania.com/es/gathering-map)",
+      "\n**Season 1 — Aqualis**\n[View ingredient locations](https://www.purrwikimania.com/es/gathering-map)",
+      "\n**Season 2 — Loong Haven**\n[View ingredient and gem locations](https://www.purrwikimania.com/es/gathering-map)",
+      "\n**Season 3 — Aethyris**\n[View ingredient and gem locations](https://www.purrwikimania.com/es/gathering-map)",
+      "\n**Season 4 — Harpadia (future for earlier servers)**\n[View ingredient and gem locations](https://www.purrwikimania.com/es/gathering-map)",
+      "\n**Season 5 — Ignis (future for earlier servers)**\n[View ingredient and gem locations](https://www.purrwikimania.com/es/gathering-map)",
+      "\n**Season 6 — Aeperis (upcoming)**\nIngredient node coverage not yet confirmed. Will be added when a reliable map is available.",
+      "\n**Additional world map:** [Explore all regions](https://swordxstaff-compass.com/)",
+      "\n**Note:** These links open a region-selectable map, not individual preselected maps. Unlocks vary by server; future region data is shown for preparation."
     ],
     null,
     false
