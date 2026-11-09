@@ -3102,7 +3102,7 @@ async function backfillRecentGuildPingRecords() {
   const records = [...recent.values()]
     .filter(message =>
       message.author?.id === client.user.id &&
-      /^<@&\\d+>\\s+\\*\\*/.test(message.content || "")
+      /^<@&\d+>\s+\*\*/.test(message.content || "")
     )
     .reverse();
 
