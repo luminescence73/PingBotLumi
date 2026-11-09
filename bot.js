@@ -1334,13 +1334,23 @@ async function enforceAshenMembersStaffOnly(guild) {
 
   await channel.permissionOverwrites.edit(guild.roles.everyone, {
     ...denyPosting,
+    ViewChannel: false,
+    ReadMessageHistory: false,
+    AddReactions: false,
+    SendMessagesInThreads: false
+  }, { reason: "Community highlights require completed onboarding" });
+
+  await channel.permissionOverwrites.edit(ONBOARDING_COMPLETE, {
     ViewChannel: true,
     ReadMessageHistory: true,
+    SendMessages: false,
     AddReactions: true,
+    CreatePublicThreads: false,
+    CreatePrivateThreads: false,
     SendMessagesInThreads: true
-  }, { reason: "Only Ashen staff may post; members may comment in threads" });
+  }, { reason: "Onboarded members may view, react, and discuss highlights" });
 
-  for (const id of Object.values(STAFF_ROLES)) {
+  for (const id of commandStaffRoleIds(guild)) {
     const role = guild.roles.cache.get(id);
     if (!role) {
       console.warn("⚠️ Ashen staff role missing: " + id);
@@ -1357,7 +1367,7 @@ async function enforceAshenMembersStaffOnly(guild) {
   for (const overwrite of [...channel.permissionOverwrites.cache.values()]) {
     if (overwrite.id === guild.id ||
         overwrite.id === me.id ||
-        Object.values(STAFF_ROLES).includes(overwrite.id)) continue;
+        commandStaffRoleIds(guild).includes(overwrite.id)) continue;
 
     const canPost = overwrite.allow.has(PermissionFlagsBits.SendMessages) ||
       overwrite.allow.has(PermissionFlagsBits.CreatePublicThreads) ||
@@ -5328,6 +5338,10 @@ client.once(Events.ClientReady, async readyClient => {
 
   await organizeAshenSidebar(ashenGuild).catch(error => {
     console.error("⚠️ Ashen sidebar organization:", error.message);
+  });
+
+  await applyAshenPermissions(ashenGuild).catch(error => {
+    console.error("⚠️ Ashen permission model:", error.message);
   });
 
   // Channel/category names are now controlled manually by Ashen staff.
