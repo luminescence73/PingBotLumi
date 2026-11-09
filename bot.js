@@ -387,7 +387,7 @@ const REMINDERS = {
   battle: { name: "Clash Battle Call", emoji: "⚔️", role: "1537936402497675265" },
   final: { name: "Clash Final Call", emoji: "🚨", role: "1537936646442451075" },
   registration: { name: "Guild Clash Registration", emoji: "⏰", role: "1537936738998296618" },
-  chaos_last_call: { name: "Chaos Tyrant Last Call", emoji: "☄️", role: "1569150660363026462" }
+  chaos_last_call: { name: "Chaos Tyrant Last Call", emoji: "⏳", role: "1569150660363026462" }
 };
 
 const TOURNAMENTS = {
@@ -1083,6 +1083,17 @@ Only subscribed alerts will notify you.`,
     Object.values(REMINDERS).map(x => x.emoji),
     "# GUILD ALERTS"
   );
+
+  // Retire the previous Chaos emoji on an existing reaction-role panel.
+  // This only cleans up the obsolete UI reaction; current role subscriptions stay intact.
+  const oldChaosReaction = preferenceMessages.reminders?.reactions.cache.find(
+    reaction => reaction.emoji.name === "☄️"
+  );
+  if (oldChaosReaction) {
+    await oldChaosReaction.remove().catch(error =>
+      console.warn("Could not clear previous Chaos reaction:", error.message)
+    );
+  }
 
   preferenceMessages.tournaments = await createPreferencePanel(
     channel, "panel_pref_tournaments",
@@ -2407,7 +2418,7 @@ const SCHEDULED_EVENTS = [
     days: [0],
     winter: [20,0],
     summer: [21,0],
-    text: "☄️ Chaos Tyrant: Last call! One hour remains before Chaos closes.",
+    text: "⏳ Chaos Tyrant: Last call! One hour remains before Chaos closes.",
     nonNexusSunday: true
   }
 ];
