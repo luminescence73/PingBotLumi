@@ -153,6 +153,14 @@ async function initDatabase() {
       sent_at TIMESTAMPTZ DEFAULT NOW()
     )`,
 
+    `CREATE TABLE IF NOT EXISTS localized_ping_roles (
+      source_role_id TEXT NOT NULL,
+      language_key TEXT NOT NULL,
+      scoped_role_id TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (source_role_id, language_key)
+    )`,
+
     `CREATE TABLE IF NOT EXISTS bot_state (
       key TEXT PRIMARY KEY,
       value JSONB NOT NULL,
@@ -2534,95 +2542,192 @@ async function ensureLanguageAccess(member, languageKey) {
   return !!channel.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel);
 }
 
+// A Discord role mention alerts EVERY member holding that role who can
+// see the channel. Using the original subscription role in six channels
+// would therefore ping multilingual members multiple times. Maintain a
+// separate, non-hoisted role for each event + preferred-language cohort.
+async function getScopedPingRoles(guild, subscriptionRole, activeLanguages) {
+  const rows = await pool.query(
+    "SELECT language_key, scoped_role_id FROM localized_ping_roles WHERE source_role_id = $1",
+    [subscriptionRole.id]
+  );
+  const known = new Map(rows.rows.map(row => [row.language_key, row.scoped_role_id]));
+  const roles = new Map();
+
+  for (const key of LANGUAGE_KEYS) {
+    const existingId = known.get(key);
+    if (!existingId && !activeLanguages.has(key)) continue;
+
+    let helperRole = existingId
+      ? await guild.roles.fetch(existingId).catch(() => null)
+      : null;
+
+    if (!helperRole && activeLanguages.has(key)) {
+      const info = LANGUAGE_CHANNELS[key];
+      helperRole = await guild.roles.create({
+        name: `Vestra | ${subscriptionRole.name.slice(0, 48)} | ${info.code.toUpperCase()} | ${subscriptionRole.id.slice(-4)}`,
+        hoist: false,
+        mentionable: false,
+        reason: "Notify subscribers once in their primary language"
+      });
+      await pool.query(
+        `INSERT INTO localized_ping_roles(source_role_id, language_key, scoped_role_id)
+         VALUES($1, $2, $3)
+         ON CONFLICT (source_role_id, language_key)
+         DO UPDATE SET scoped_role_id = EXCLUDED.scoped_role_id`,
+        [subscriptionRole.id, key, helperRole.id]
+      );
+    }
+    if (helperRole) roles.set(key, helperRole);
+  }
+  return roles;
+}
+
+async function syncScopedPingRoles(guild, scopedRoles, recipientsByLanguage) {
+  // Reconcile EVERY previously-created cohort for this event, including
+  // empty cohorts. Finish all removals before sending a single role ping.
+  for (const [key, scopedRole] of scopedRoles) {
+    const expected = new Set((recipientsByLanguage.get(key) || []).map(m => m.id));
+    for (const member of [...scopedRole.members.values()]) {
+      if (!expected.has(member.id)) {
+        await member.roles.remove(scopedRole, "No longer subscribed to this event in this language");
+      }
+    }
+    for (const id of expected) {
+      const member = guild.members.cache.get(id);
+      if (!member) throw new Error("Cannot resolve localized notification subscriber " + id);
+      if (!member.roles.cache.has(scopedRole.id)) {
+        await member.roles.add(scopedRole, "Event alerts in preferred language");
+      }
+    }
+  }
+}
+
+async function sendScopedRolePing(channel, helperRole, text) {
+  const canMentionAllRoles =
+    !!channel.permissionsFor(client.user)?.has(PermissionFlagsBits.MentionEveryone);
+  let temporarilyMentionable = false;
+
+  if (!helperRole.mentionable && !canMentionAllRoles) {
+    // A bot without Mention All Roles may temporarily enable this specific
+    // helper role; restore it immediately after the message is sent.
+    await helperRole.setMentionable(true, "Send primary-language guild notification");
+    temporarilyMentionable = true;
+  }
+
+  try {
+    await channel.send({
+      content: `<@&${helperRole.id}>\n${text}`,
+      allowedMentions: {
+        parse: [],
+        roles: [helperRole.id],
+        users: [],
+        repliedUser: false
+      }
+    });
+  } finally {
+    if (temporarilyMentionable) {
+      await helperRole.setMentionable(false, "Restore private notification helper role")
+        .catch(error => console.error("Could not restore scoped role mentionability:", error));
+    }
+  }
+}
+
 async function sendLocalizedRoleNotification(roleId, englishText, label) {
   const guild = getGuild();
   if (!guild) return 0;
-
   await guild.members.fetch();
 
-  const role = await guild.roles.fetch(roleId).catch(() => null);
-  if (!role) {
-    console.error(`❌ ${label}: role ${roleId} could not be found.`);
-    await sendMasterLog(roleId, label, englishText, 0);
+  const subscriptionRole = await guild.roles.fetch(roleId).catch(() => null);
+  if (!subscriptionRole) {
+    console.error("Notification role missing: " + roleId);
+    await sendMasterLog(roleId, label, englishText, 0).catch(console.error);
     return 0;
   }
 
-  const members = role.members.filter(member => !member.user.bot);
-  const ids = [...members.keys()];
-  const prefs = await loadPrimaryLanguageMap(ids);
-  const grouped = new Map(LANGUAGE_KEYS.map(key => [key, []]));
-
-  for (const member of members.values()) {
-    const languageKey = inferPrimaryFromRoles(member, prefs);
-    grouped.get(languageKey)?.push(member);
+  const subscribers = subscriptionRole.members.filter(m => !m.user.bot);
+  const prefs = await loadPrimaryLanguageMap([...subscribers.keys()]);
+  const byLanguage = new Map(LANGUAGE_KEYS.map(key => [key, []]));
+  for (const member of subscribers.values()) {
+    const key = inferPrimaryFromRoles(member, prefs);
+    byLanguage.get(key)?.push(member);
   }
 
-  let delivered = 0;
-
-  for (const [languageKey, recipients] of grouped.entries()) {
+  const deliveries = [];
+  const reachableByLanguage = new Map();
+  for (const [key, recipients] of byLanguage) {
     if (!recipients.length) continue;
 
-    const info = LANGUAGE_CHANNELS[languageKey];
+    const info = LANGUAGE_CHANNELS[key];
     const channel = await client.channels.fetch(info.channel).catch(() => null);
     if (!channel?.isTextBased()) {
-      console.error(`❌ ${label}: ${info.name} General channel unavailable.`);
+      console.error("Missing " + info.name + " General channel for " + label);
       continue;
     }
 
     const reachable = [];
-
     for (const member of recipients) {
-      const canView = await ensureLanguageAccess(member, languageKey);
-      if (canView) reachable.push(member);
-      else {
-        console.error(
-          `⚠️ ${label}: ${member.user.tag} cannot view ${info.name} General.`
-        );
-      }
+      if (await ensureLanguageAccess(member, key)) reachable.push(member);
+      else console.warn(label + ": " + member.id + " cannot view " + info.name + " General");
     }
-
     if (!reachable.length) continue;
 
-    let localized = englishText;
+    reachableByLanguage.set(key, reachable);
+    deliveries.push({ key, info, channel, reachable });
+  }
 
-    if (languageKey !== "english") {
+  // Fail closed: if any role membership cannot be reconciled, send the
+  // translated announcement without mentions rather than risk double pings.
+  let scopedRoles = new Map();
+  let rolesReady = true;
+  try {
+    scopedRoles = await getScopedPingRoles(
+      guild, subscriptionRole, new Set(reachableByLanguage.keys())
+    );
+    await syncScopedPingRoles(guild, scopedRoles, reachableByLanguage);
+    for (const key of reachableByLanguage.keys()) {
+      if (!scopedRoles.has(key)) throw new Error("Missing locale role for " + key);
+    }
+  } catch (error) {
+    rolesReady = false;
+    console.error("Failed to synchronize preferred-language notification roles:", error);
+  }
+
+  let delivered = 0;
+  for (const {key, info, channel, reachable} of deliveries) {
+    let localized = englishText;
+    if (key !== "english") {
       try {
         localized = await googleTranslate(englishText, info.code, "en");
       } catch (error) {
-        console.error(
-          `⚠️ Notification translation fallback (${languageKey}):`,
-          error.message
-        );
+        console.error("Notification translation fallback (" + key + "):", error.message);
       }
     }
 
-    // Send a single subscriber role mention per language. Never list individual users.
-    // Only the specified reminder/tournament role may trigger a notification.
-      const canPingRole = role.mentionable ||
-        !!channel.permissionsFor(client.user)?.has(PermissionFlagsBits.MentionEveryone);
-      if (!canPingRole) {
-        console.warn(`⚠️ ${label}: Vestra may not be able to ping role ${roleId} in ${info.name} General. Make the role mentionable or grant Vestra Mention @everyone, @here, and All Roles.`);
+    try {
+      if (rolesReady) {
+        await sendScopedRolePing(channel, scopedRoles.get(key), localized);
+        delivered += reachable.length;
+      } else {
+        await channel.send({
+          content: localized,
+          allowedMentions: { parse: [], users: [], roles: [] }
+        });
       }
-
-      await channel.send({
-        content: `<@&${roleId}>\n${localized}`,
-        allowedMentions: {
-          parse: [],
-          roles: [roleId],
-          users: [],
-          repliedUser: false
-        }
-      });
-
-      delivered += reachable.length;
-
+    } catch (error) {
+      console.error("Role ping failed (" + label + " / " + key + "):", error);
+      // A role permission error must not accidentally ping the global
+      // subscription role or expose a long list of member mentions.
+    }
   }
 
   console.log(
-    `📣 ${label}: ${members.size} subscriber(s), ${delivered} localized delivery/deliveries.`
+    `${label}: ${subscribers.size} subscribers, ${delivered} localized role notifications.`
   );
-
-  await sendMasterLog(roleId, label, englishText, delivered);
+  // The archive does not ping and should not cause a scheduled event to
+  // retry (and double notify) when the log channel is unavailable.
+  await sendMasterLog(roleId, label, englishText, delivered)
+    .catch(error => console.error("Notification archive failed:", error));
   return delivered;
 }
 
