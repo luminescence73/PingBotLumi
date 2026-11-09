@@ -1,8 +1,9 @@
 import {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType,
+  ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, ChannelType,
   EmbedBuilder, MessageFlags, ModalBuilder, StringSelectMenuBuilder,
   TextInputBuilder, TextInputStyle
 } from "discord.js";
+import { readFile } from "node:fs/promises";
 
 // ASHEN CONQUEST INTEL — existing channel and hand-curated names preserved.
 // The guild floor is a bot-tracked counter (not a game API reading).
@@ -134,6 +135,7 @@ function sourceLabel(source) {
 const BOSS_DATA = Object.freeze({
   136: Object.freeze({
     name: "Spider Queen",
+    artwork: { filename: "spider-queen-f136.webp", asset: "./assets/conquest/spider-queen-f136.webp.b64" },
     level: 346,
     rank: "Master",
     stats: Object.freeze({
@@ -299,20 +301,13 @@ function statBreakdownEmbed(floor) {
     ).setFooter({ text: "Screenshot-confirmed F136 record • This does not update live boss HP." });
 }
 
-function fightStatus(floor) {
-  if (floor === FIRST_KNOWN_FLOOR) {
-    return "**NOV 9 SCREENSHOT:** Spider Queen • F136 • **52% HP** • **Daily Challenge Attempts 2/2**. " +
-      "Historic on-screen values, **not live boss HP or attempts**.";
-  }
-  return "**HP:** Not connected to the game; inspect the current boss in Sword X Staff.";
-}
 function progressBar(floor) {
   // Floor progression indicator; NOT a boss-HP bar.
   const prev = Math.max(1, floor - 1);
   const next = Math.min(MAX_FLOOR, floor + 1);
   return "✅ F" + prev + "   ━━━━━   ⚔️ **F" + floor + "**   ━━━━━   ⏭️ F" + next;
 }
-function mainEmbed(progress, source) {
+function mainEmbed(progress, source, includeArtwork = false) {
   const floor = Number(progress.floor);
   const boss = knownBoss(floor);
   const st = boss?.stats;
@@ -344,14 +339,11 @@ function mainEmbed(progress, source) {
     })
     .setFooter({
       text: boss
-        ? "F136 stats: in-game screenshots • HP progress not live"
+        ? "F136 boss: in-game screenshots • Floor tracked by Vestra"
         : "Floor tracked by Vestra • Boss data not verified"
     });
-  if (floor === FIRST_KNOWN_FLOOR) {
-    embed.addFields({
-      name: "📸 LAST REPORTED HP",
-      value: "52% on Nov 9 • Historical screenshot, not live HP"
-    });
+  if (includeArtwork && boss?.artwork) {
+    embed.setImage("attachment://" + boss.artwork.filename);
   }
   return embed;
 }
@@ -412,11 +404,31 @@ function optionsMenu(staff) {
       .addOptions(options)
   );
 }
-function payload(progress, source) {
+// Embed artwork is decoded from a small tracked base64 asset and attached
+// directly to Discord. No external CDN or staff uploads are necessary.
+async function artworkAttachment(floor) {
+  const asset = knownBoss(floor)?.artwork;
+  if (!asset) return null;
+  try {
+    const encoded = (await readFile(new URL(asset.asset, import.meta.url), "utf8")).trim();
+    const bytes = Buffer.from(encoded, "base64");
+    if (bytes.length < 1000 || bytes.toString("ascii", 0, 4) !== "RIFF") {
+      throw new Error("Image data is invalid");
+    }
+    return new AttachmentBuilder(bytes, { name: asset.filename });
+  } catch (error) {
+    console.warn("⚠️ Conquest Intel boss artwork unavailable:", error.message);
+    return null;
+  }
+}
+function payload(progress, source, artwork = null) {
   return {
     content: "",
-    embeds: [mainEmbed(progress, source)],
+    embeds: [mainEmbed(progress, source, Boolean(artwork))],
     components: rows(),
+    files: artwork ? [artwork] : [],
+    // Do not accumulate stale attachments when advancing or refreshing.
+    attachments: [],
     allowedMentions: { parse: [] }
   };
 }
@@ -426,6 +438,7 @@ async function editPanel() {
   if (!channel) return null;
   const progress = await getProgress();
   const source = await readState(SOURCE_KEY);
+  const artwork = await artworkAttachment(progress.floor);
   const previous = await readState(PANEL_KEY);
   let message = previous?.channelId === channel.id && previous?.messageId
     ? await channel.messages.fetch(previous.messageId).catch(() => null)
@@ -438,9 +451,9 @@ async function editPanel() {
   }
 
   if (message) {
-    await message.edit(payload(progress, source));
+    await message.edit(payload(progress, source, artwork));
   } else {
-    message = await channel.send(payload(progress, source));
+    message = await channel.send(payload(progress, source, artwork));
   }
   await writeState(PANEL_KEY, { channelId: channel.id, messageId: message.id });
   if (!message.pinned) await message.pin().catch(() => {});
@@ -510,8 +523,10 @@ async function staffAccess(interaction, isStaff) {
 async function showFloor(interaction, floor) {
   const progress = { floor };
   const source = await readState(SOURCE_KEY);
+  const artwork = await artworkAttachment(floor);
   await interaction.reply({
-    embeds: [mainEmbed(progress, source)],
+    embeds: [mainEmbed(progress, source, Boolean(artwork))],
+    files: artwork ? [artwork] : [],
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] }
   });
