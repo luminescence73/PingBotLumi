@@ -1756,7 +1756,7 @@ async function createHelpThread(interaction, type, emoji, details) {
 }
 
 async function migrateLegacyIntroductions() {
-  const completionKey = "introductions_full_rebuild_sol_v2";
+  const completionKey = "introductions_full_rebuild_sol_v3";
   if ((await dbGetState(completionKey))?.completed) return;
 
   const channel = await client.channels.fetch(CHANNELS.INTRODUCTIONS).catch(() => null);
@@ -1767,6 +1767,8 @@ async function migrateLegacyIntroductions() {
   const clean = value => String(value || "").replace(/\*\*/g, "").trim();
   const records = new Map();
   const vestraIntroMessages = [];
+  let deleteFailures = 0;
+  let rebuildFailures = 0;
 
   const fieldValue = (embed, label) =>
     clean((embed?.fields || []).find(field =>
@@ -1833,8 +1835,6 @@ async function migrateLegacyIntroductions() {
     if (!page?.size) break;
 
     for (const message of page.values()) {
-      if (message.author.id !== client.user.id) continue;
-
       const combined = [
         message.content || "",
         ...(message.embeds || []).flatMap(embed => [
@@ -1867,6 +1867,11 @@ async function migrateLegacyIntroductions() {
         );
 
       if (!isGuide && !isRecruit) continue;
+
+      const isCurrentVestra = message.author.id === client.user.id;
+      const isBotLike = message.author.bot || !!message.webhookId;
+      if (!isCurrentVestra && !isBotLike) continue;
+
       vestraIntroMessages.push(message);
       if (!isRecruit) continue;
 
@@ -1951,9 +1956,10 @@ async function migrateLegacyIntroductions() {
 
   // Remove every old Vestra guide/recruit message so there can be no replicas.
   for (const message of vestraIntroMessages) {
-    await message.delete().catch(error =>
-      console.warn(`⚠️ Could not delete old introduction ${message.id}: ${error.message}`)
-    );
+    await message.delete().catch(error => {
+      deleteFailures++;
+      console.warn(`⚠️ Could not delete old introduction ${message.id}: ${error.message}`);
+    });
   }
 
   // Post the guide FIRST so it is physically above every rebuilt Vestra card.
@@ -1994,19 +2000,24 @@ Welcome new recruits. Make them part of the guild.`;
       allowedMentions: { parse: [] }
     }).then(() => {
       rebuilt++;
-    }).catch(error =>
-      console.error(`❌ Could not rebuild intro for ${record.displayName}: ${error.message}`)
-    );
+    }).catch(error => {
+      rebuildFailures++;
+      console.error(`❌ Could not rebuild intro for ${record.displayName}: ${error.message}`);
+    });
   }
 
-  await dbSetState(completionKey, {
-    completed: true,
-    oldMessagesRemoved: vestraIntroMessages.length,
-    uniqueCardsRebuilt: rebuilt
-  });
+  const succeeded = deleteFailures === 0 && rebuildFailures === 0;
+
+  if (succeeded) {
+    await dbSetState(completionKey, {
+      completed: true,
+      oldMessagesRemoved: vestraIntroMessages.length,
+      uniqueCardsRebuilt: rebuilt
+    });
+  }
 
   console.log(
-    `✅ Introductions rebuilt: guide first, ${vestraIntroMessages.length} old Vestra intro message(s) removed, ${rebuilt} unique recruit card(s) recreated.`
+    `${succeeded ? "✅" : "⚠️"} Introductions rebuild v3: ${vestraIntroMessages.length - deleteFailures} old intro message(s) removed, ${deleteFailures} delete failure(s), ${rebuilt} unique recruit card(s) recreated, ${rebuildFailures} rebuild failure(s).`
   );
 }
 
@@ -4643,6 +4654,14 @@ async function runPermissionChecks() {
   await checkChannelPermissions(CHANNELS.REMINDERS, "#guild-pings", basic);
   await checkChannelPermissions(CHANNELS.PREFERENCES, "#preferences", [...basic, { name: "Add Reactions", flag: PermissionFlagsBits.AddReactions }]);
   await checkChannelPermissions(CHANNELS.HELP, "#help", basic);
+  await checkChannelPermissions(
+    CHANNELS.INTRODUCTIONS,
+    "#introductions cleanup",
+    [
+      ...basic,
+      { name: "Manage Messages", flag: PermissionFlagsBits.ManageMessages }
+    ]
+  );
   await checkChannelPermissions(CHANNELS.EVENT_BOARD, "Live Event Board", basic);
   await checkChannelPermissions(CHANNELS.HIGHLIGHTS, "Community Highlights", basic);
 
@@ -5780,7 +5799,7 @@ client.once(Events.ClientReady, async readyClient => {
 
   // Safe one-time migrations of Vestra's older generated messages.
   void migrateLegacyIntroductions().catch(error => {
-    console.error("❌ Could not complete introductions rebuild v2:", error);
+    console.error("❌ Could not complete introductions rebuild v3:", error);
   });
 
   void migrateLegacyAlertHistory().catch(error => {
