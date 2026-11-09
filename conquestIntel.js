@@ -355,6 +355,44 @@ const BOSS_DATA = Object.freeze({
     skillLabels: Object.freeze(["Movement","Debuff","DMG","DMG","Buff"]),
     threats: "Movement, Debuff, two DMG skills and a Buff are visible. Its 20.8M ATK and 8.54M SPD create pressure; keep cleansing and defensive responses available where possible. Exact effects and elemental weaknesses remain unverified.",
     note: "Source: supplied game screenshots; this Conquest floor was locked."
+  }),
+  147: Object.freeze({
+    name: "Dusty Arbiter", emoji: "👻",
+    artwork: { filename: "dusty-arbiter-f147.webp", asset: "./assets/conquest/dusty-arbiter-f147.webp.b64" },
+    level: 412, rank: "Master",
+    stats: Object.freeze({
+      hp: "550B", atk: "20.8M", def: "24.9M", spd: "9.42M",
+      resilience: "240", critRate: "55.2%", critDamage: "50%",
+      critResistance: "27.6%", blockRate: "53.7%", blockEfficiency: "100%",
+      accuracy: "27.6%", damageBoost: "45.8%", damageResistance: "43.9%",
+      healingBoost: "0%", effectHitRate: "200K", effectResistance: "200K",
+      elementalMastery: "250K", elementalResistance: "250K",
+      physicalMastery: "250K", physicalResistance: "250K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 16.9K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 16.9K each"
+    }),
+    skillLabels: Object.freeze(["DMG", "Dispel", "Summon", "DMG"]),
+    threats: "Dispel and Summon appear alongside two DMG skills. Be prepared for buff removal and summoned enemies; exact timing, targets and effects are not confirmed.",
+    note: "Source: user-provided F147 game screenshots; floor was locked."
+  }),
+  148: Object.freeze({
+    name: "Swordlion", emoji: "🦁",
+    artwork: { filename: "swordlion-f148.webp", asset: "./assets/conquest/swordlion-f148.webp.b64" },
+    level: 418, rank: "Master",
+    stats: Object.freeze({
+      hp: "584B", atk: "19.6M", def: "28M", spd: "10M",
+      resilience: "240", critRate: "55.3%", critDamage: "50%",
+      critResistance: "27.6%", blockRate: "53.8%", blockEfficiency: "100%",
+      accuracy: "27.6%", damageBoost: "45.8%", damageResistance: "43.9%",
+      healingBoost: "0%", effectHitRate: "210K", effectResistance: "210K",
+      elementalMastery: "263K", elementalResistance: "263K",
+      physicalMastery: "263K", physicalResistance: "263K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 17.2K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 17.2K each"
+    }),
+    skillLabels: Object.freeze(["Unlabeled skill", "DMG", "DMG", "DMG", "DMG", "Additional skill partially shown"]),
+    threats: "Four labeled DMG skills are visible, as well as an unlabeled first skill and a further icon cut off at the right edge. High 28M DEF and 10M SPD may demand sustained damage and defensive coverage; verify exact skill effects in-game.",
+    note: "Source: user-provided F148 game screenshots; floor was locked. Not all skill labels were visible."
   })
 });
 
