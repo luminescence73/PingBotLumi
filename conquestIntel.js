@@ -298,6 +298,63 @@ const BOSS_DATA = Object.freeze({
     skillLabels: Object.freeze(["DMG","Debuff","Buff","Summon"]),
     threats: "DMG, Debuff, Buff and Summon are visible. Check when summons appear and which status effects are applied; keep support units safe. Exact effects are not yet verified.",
     note: "Source: user-provided screenshots; this Conquest floor was locked."
+  }),
+  144: Object.freeze({
+    name: "Amaterasu Fragment", emoji: "🌞",
+    artwork: { filename: "amaterasu-fragment-f144.webp", asset: "./assets/conquest/amaterasu-fragment-f144.webp.b64" },
+    level: 394, rank: "Master",
+    stats: Object.freeze({
+      hp: "461B", atk: "18.1M", def: "21.7M", spd: "7.1M",
+      resilience: "240", critRate: "61.4%", critDamage: "50%",
+      critResistance: "32.5%", blockRate: "53.5%", blockEfficiency: "100%",
+      accuracy: "27.5%", damageBoost: "45.7%", damageResistance: "43.9%",
+      healingBoost: "0%", effectHitRate: "172K", effectResistance: "172K",
+      elementalMastery: "215K", elementalResistance: "215K",
+      physicalMastery: "215K", physicalResistance: "215K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 16.1K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 16.1K each"
+    }),
+    skillLabels: Object.freeze(["DMG","DMG","DMG","Heal"]),
+    threats: "Three damaging skills plus a Heal skill. Its healing can prolong the fight; look for safe opportunities to pressure damage and consider healing reduction if your team has it. Heal timing and exact effects are not yet verified.",
+    note: "Source: supplied game screenshots; this Conquest floor was locked."
+  }),
+  145: Object.freeze({
+    name: "Taowu", emoji: "🐗",
+    artwork: { filename: "taowu-f145.webp", asset: "./assets/conquest/taowu-f145.webp.b64" },
+    level: 400, rank: "Master",
+    stats: Object.freeze({
+      hp: "488B", atk: "16.6M", def: "25.4M", spd: "7.94M",
+      resilience: "240", critRate: "61.5%", critDamage: "50%",
+      critResistance: "32.5%", blockRate: "53.6%", blockEfficiency: "100%",
+      accuracy: "27.5%", damageBoost: "45.7%", damageResistance: "43.9%",
+      healingBoost: "0%", effectHitRate: "180K", effectResistance: "180K",
+      elementalMastery: "226K", elementalResistance: "226K",
+      physicalMastery: "226K", physicalResistance: "226K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 16.4K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 16.4K each"
+    }),
+    skillLabels: Object.freeze(["Knockback","Knockback","DMG","Movement","Buff"]),
+    threats: "Two Knockback skills, Movement, Buff and a DMG skill are shown. High 25.4M DEF and positioning disruption are the main concerns. Protect back-line placement and inspect its Buff and movement triggers.",
+    note: "Source: supplied game screenshots; this Conquest floor was locked."
+  }),
+  146: Object.freeze({
+    name: "Qiongqi", emoji: "🐺",
+    artwork: { filename: "qiongqi-f146.webp", asset: "./assets/conquest/qiongqi-f146.webp.b64" },
+    level: 406, rank: "Master",
+    stats: Object.freeze({
+      hp: "517B", atk: "20.8M", def: "22.2M", spd: "8.54M",
+      resilience: "240", critRate: "58.4%", critDamage: "50%",
+      critResistance: "30.1%", blockRate: "53.7%", blockEfficiency: "100%",
+      accuracy: "27.6%", damageBoost: "45.7%", damageResistance: "43.9%",
+      healingBoost: "0%", effectHitRate: "189K", effectResistance: "189K",
+      elementalMastery: "237K", elementalResistance: "237K",
+      physicalMastery: "237K", physicalResistance: "237K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 16.6K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 16.6K each"
+    }),
+    skillLabels: Object.freeze(["Movement","Debuff","DMG","DMG","Buff"]),
+    threats: "Movement, Debuff, two DMG skills and a Buff are visible. Its 20.8M ATK and 8.54M SPD create pressure; keep cleansing and defensive responses available where possible. Exact effects and elemental weaknesses remain unverified.",
+    note: "Source: supplied game screenshots; this Conquest floor was locked."
   })
 });
 
