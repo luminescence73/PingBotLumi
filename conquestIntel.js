@@ -393,6 +393,82 @@ const BOSS_DATA = Object.freeze({
     skillLabels: Object.freeze(["Unlabeled skill", "DMG", "DMG", "DMG", "DMG", "Additional skill partially shown"]),
     threats: "Four labeled DMG skills are visible, as well as an unlabeled first skill and a further icon cut off at the right edge. High 28M DEF and 10M SPD may demand sustained damage and defensive coverage; verify exact skill effects in-game.",
     note: "Source: user-provided F148 game screenshots; floor was locked. Not all skill labels were visible."
+  }),
+  149: Object.freeze({
+    name: "Bronze Blademon", emoji: "🔥",
+    artwork: { filename: "bronze-blademon-f149.webp", asset: "./assets/conquest/bronze-blademon-f149.webp.b64" },
+    level: 424, rank: "Master",
+    stats: Object.freeze({
+      hp: "618B", atk: "24.9M", def: "26.5M", spd: "10.2M",
+      resilience: "240", critRate: "55.4%", critDamage: "50%",
+      critResistance: "27.7%", blockRate: "53.9%", blockEfficiency: "100%",
+      accuracy: "27.7%", damageBoost: "45.8%", damageResistance: "44%",
+      healingBoost: "0%", effectHitRate: "220K", effectResistance: "220K",
+      elementalMastery: "276K", elementalResistance: "276K",
+      physicalMastery: "276K", physicalResistance: "276K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 17.4K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 17.4K each"
+    }),
+    skillLabels: Object.freeze(["DMG", "DMG", "DMG", "DMG"]),
+    threats: "Four damaging skills are visible; with 24.9M ATK and 10.2M SPD, plan for sustained incoming damage. Specific attack ranges, elements and effects are not yet verified.",
+    note: "Source: supplied F149 game screenshots; floor was locked."
+  }),
+  150: Object.freeze({
+    name: "Oathbound Guard", emoji: "🛡️",
+    artwork: { filename: "oathbound-guard-f150.webp", asset: "./assets/conquest/oathbound-guard-f150.webp.b64" },
+    level: 430, rank: "Master",
+    stats: Object.freeze({
+      hp: "654B", atk: "26.7M", def: "29.6M", spd: "9.52M",
+      resilience: "240", critRate: "55.5%", critDamage: "50%",
+      critResistance: "27.7%", blockRate: "54%", blockEfficiency: "100%",
+      accuracy: "27.7%", damageBoost: "45.9%", damageResistance: "44%",
+      healingBoost: "0%", effectHitRate: "232K", effectResistance: "232K",
+      elementalMastery: "290K", elementalResistance: "290K",
+      physicalMastery: "290K", physicalResistance: "290K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 17.7K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 17.7K each"
+    }),
+    skillLabels: Object.freeze(["DMG", "Ailment", "DMG", "DMG"]),
+    threats: "Three DMG skills and an Ailment skill are visible. High ATK (26.7M) and DEF (29.6M) call for reliable mitigation and status-effect countermeasures. Exact ailment and skill timing are unverified.",
+    note: "Source: supplied F150 game screenshots; floor was locked."
+  }),
+  151: Object.freeze({
+    name: "White Tiger", emoji: "🐯",
+    artwork: { filename: "white-tiger-f151.webp", asset: "./assets/conquest/white-tiger-f151.webp.b64" },
+    level: 166, rank: "Paragon",
+    stats: Object.freeze({
+      hp: "40.4B", atk: "945K", def: "2M", spd: "716K",
+      resilience: "240", critRate: "42.2%", critDamage: "50%",
+      critResistance: "31.2%", blockRate: "39.2%", blockEfficiency: "100%",
+      accuracy: "30%", damageBoost: "30.3%", damageResistance: "109.1%",
+      healingBoost: "0%", effectHitRate: "115K", effectResistance: "86.3K",
+      elementalMastery: "287K", elementalResistance: "287K",
+      physicalMastery: "287K", physicalResistance: "287K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 12.3K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 12.3K each"
+    }),
+    skillLabels: Object.freeze(["DMG", "DMG", "DMG", "Movement", "Buff"]),
+    threats: "Paragon rank begins at F151 in the supplied screenshots; its level and base stats differ sharply from F150. Three DMG skills, Movement and Buff are shown. DMG RES is unusually high at 109.1%; exact mitigation formula, Buff and Movement effects remain unverified.",
+    note: "Source: supplied F151 game screenshots; floor was locked. Paragon rank and level 166 are intentional, not extrapolated."
+  }),
+  152: Object.freeze({
+    name: "Cloudmist Phoenix", emoji: "🦅",
+    artwork: { filename: "cloudmist-phoenix-f152.webp", asset: "./assets/conquest/cloudmist-phoenix-f152.webp.b64" },
+    level: 168, rank: "Paragon",
+    stats: Object.freeze({
+      hp: "41.4B", atk: "1.56M", def: "2.22M", spd: "661K",
+      resilience: "240", critRate: "43%", critDamage: "50%",
+      critResistance: "31.8%", blockRate: "40%", blockEfficiency: "100%",
+      accuracy: "30.6%", damageBoost: "30.8%", damageResistance: "111.1%",
+      healingBoost: "0%", effectHitRate: "121K", effectResistance: "91K",
+      elementalMastery: "303K", elementalResistance: "303K",
+      physicalMastery: "303K", physicalResistance: "303K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 12.6K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 12.6K each"
+    }),
+    skillLabels: Object.freeze(["Debuff", "Debuff", "Debuff", "Debuff"]),
+    threats: "All four visible skills are marked Debuff. Prioritize status protection or cleansing if available and plan around high 111.1% DMG RES. The exact debuffs, targets and resistance calculation have not been confirmed.",
+    note: "Source: supplied F152 game screenshots; floor was locked."
   })
 });
 
