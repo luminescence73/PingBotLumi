@@ -1365,29 +1365,25 @@ async function enforceAshenMembersStaffOnly(guild) {
   return true;
 }
 
-function ashenPostInfoEmbed(message) {
+function ashenPostInfoText(message) {
   const rawCaption = (message.content || "").trim();
-  // Mentions in the source post (e.g. <@123>) are kept for attribution.
   const creditPattern = /(?:^|[\s.!?])(?:🎨\s*)?(?:credits?(?:\s+to|\s+by)?|art(?:work)?\s+by|illustration\s+by|created\s+by|made\s+by|artist)\s*[:\-–]?\s*(.+)$/im;
   const match = creditPattern.exec(rawCaption);
   const credits = match?.[1]?.trim() || "Not specified";
   const caption = match ? rawCaption.replace(match[0], "").trim() : rawCaption;
   const attachmentCount = message.attachments?.size || 0;
 
-  const embed = new EmbedBuilder()
-    .setColor(BRAND_COLOR)
-    .setTitle("ASHEN / SHOWCASE")
-    .addFields(
-      { name: "Posted by", value: "<@" + message.author.id + ">", inline: true },
-      { name: "Creator credit", value: limitText(credits, 1024), inline: true },
-      { name: "Posted", value: "<t:" + Math.floor(message.createdTimestamp / 1000) + ":f>", inline: false },
-      { name: "Attachments", value: attachmentCount ? (attachmentCount + " file" + (attachmentCount === 1 ? "" : "s")) : "None", inline: true },
-      { name: "Original post", value: "[View original](" + message.url + ")", inline: true }
-    )
-    .setFooter({ text: "Vestra • Ashen Members • " + message.id });
-
-  if (caption) embed.addFields({ name: "Caption", value: limitText(caption, 1024) });
-  return embed;
+  return [
+    "## DISCUSSION",
+    "All discussion belongs in this thread so #community-highlights stays clean.",
+    "",
+    `**Posted by:** <@${message.author.id}>`,
+    `**Creator credit:** ${limitText(credits, 500)}`,
+    `**Posted:** <t:${Math.floor(message.createdTimestamp / 1000)}:f>`,
+    `**Attachments:** ${attachmentCount ? attachmentCount + " file" + (attachmentCount === 1 ? "" : "s") : "None"}`,
+    `**Original post:** [View original](${message.url})`,
+    caption ? `**Caption:** ${limitText(caption, 1000)}` : null
+  ].filter(Boolean).join("\n");
 }
 
 function ashenDiscussionIntroduction(channelId) {
@@ -1419,7 +1415,7 @@ async function upsertAshenDiscussionDetails(message, thread) {
       (m.content?.startsWith("## 💬 Discuss This Post") || m.content?.startsWith("## DISCUSSION"))
     );
     const existing = detailsMessage || oldIntroduction;
-    const data = { content: ashenDiscussionIntroduction(message.channel.id), embeds: [ashenPostInfoEmbed(message)], allowedMentions: { parse: [] } };
+    const data = { content: ashenPostInfoText(message), embeds: [], allowedMentions: { parse: [] } };
 
     if (existing) {
       await existing.edit(data);
