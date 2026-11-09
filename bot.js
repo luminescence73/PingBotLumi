@@ -3512,11 +3512,13 @@ async function organizeAshenSidebar(guildOverride = null) {
     { name: "⌁ ASHEN | VOICE", existing: ["ASHEN | VOICE"], channels: [] }
   ];
 
+  const norm = n => String(n || "").normalize("NFKC").toUpperCase().replace(/^[^A-Z0-9]+/, "").replace(/[^A-Z0-9]+/g, "");
   const categoryFor = new Map();
+  const duplicates = [];
   for (const def of definitions) {
     let category = guild.channels.cache.find(ch =>
       ch.type === ChannelType.GuildCategory &&
-      (ch.name === def.name || def.existing.includes(ch.name))
+      ([def.name, ...def.existing].some(n => norm(n) === norm(ch.name)))
     );
     if (!category) {
       category = await guild.channels.create({
@@ -3528,6 +3530,12 @@ async function organizeAshenSidebar(guildOverride = null) {
       await category.setName(def.name, "Approved Ashen Warriors sidebar organization");
     }
     categoryFor.set(def.name, category);
+    for (const other of guild.channels.cache.values()) {
+      if (other.type === ChannelType.GuildCategory && other.id !== category.id &&
+          [def.name, ...def.existing].some(n => norm(n) === norm(other.name))) {
+        duplicates.push({ other, target: category });
+      }
+    }
   }
 
   const entry = categoryFor.get("✦ ASHEN | ENTRY");
@@ -3560,6 +3568,18 @@ async function organizeAshenSidebar(guildOverride = null) {
     }
   }
 
+  // Merge any duplicate categories without deleting channels or altering ACLs.
+  for (const { other, target } of duplicates) {
+    for (const channel of [...guild.channels.cache.values()].filter(ch => ch.parentId === other.id)) {
+      await channel.setParent(target.id, { lockPermissions: false, reason: "Merge duplicate Ashen category" });
+    }
+    await guild.channels.fetch();
+    if (![...guild.channels.cache.values()].some(ch => ch.parentId === other.id)) {
+      await other.delete("Remove empty duplicate category").catch(err =>
+        console.warn("Could not remove empty duplicate:", err.message));
+    }
+  }
+
   // Preserve existing voice rooms and their permissions, including staff voice.
   for (const name of ["General", "Squad", "Boss Runs", "Command", "Afk", "Other Games", "Social"]) {
     const channel = byName(name, ChannelType.GuildVoice);
@@ -3576,17 +3596,14 @@ async function organizeAshenSidebar(guildOverride = null) {
       channels.push(...["General", "Squad", "Boss Runs", "Command", "Afk", "Other Games", "Social"]
         .map(name => byName(name, ChannelType.GuildVoice)).filter(Boolean));
     }
-    for (let i = 0; i < channels.length; i++) {
-      if (channels[i].parentId === parent.id) {
-        await channels[i].setPosition(i).catch(error =>
-          console.warn(`⚠️ Could not position #${channels[i].name}: ${error.message}`)
-        );
-      }
-    }
+    const ordered = channels.filter(ch => ch.parentId === parent.id);
+    if (ordered.length) await guild.channels.setPositions(ordered.map((ch, i) =>
+      ({ channel: ch.id, position: i })
+    )).catch(error => console.warn("Channel ordering:", error.message));
   }
-  for (const [i, def] of definitions.entries()) {
-    await categoryFor.get(def.name).setPosition(i).catch(() => {});
-  }
+  await guild.channels.setPositions(definitions.map((def, i) => ({
+    channel: categoryFor.get(def.name).id, position: i
+  }))).catch(error => console.warn("Category ordering:", error.message));
   console.log("✅ Ashen sidebar organization applied; channel IDs and permissions retained.");
 }
 
