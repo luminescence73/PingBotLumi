@@ -675,25 +675,26 @@ async function ensureChannels(client, remindersChannelId, staffRoles) {
   const resolved = {};
 
   for (const def of CHANNEL_DEFS) {
-    let channel = guild.channels.cache.find(item =>
+    const wanted = normalizeDiscordName(def.name);
+    // Staff control all channel names. Match existing decorated names
+    // (e.g. symbols or separator characters) and NEVER create replacements.
+    const channel = guild.channels.cache.find(item =>
       item.type === ChannelType.GuildText &&
       item.parentId === category.id &&
-      item.name === def.name
+      normalizeDiscordName(item.name).endsWith(wanted)
     );
 
     if (!channel) {
-      channel = await guild.channels.create({
-        name: def.name,
-        type: ChannelType.GuildText,
-        parent: category.id,
-        topic: def.topic,
-        reason: "Vestra Sword x Staff live information hub"
-      });
-      console.log(`✅ Created SxS channel #${def.name}`);
-    } else if (channel.topic !== def.topic) {
-      await channel.setTopic(def.topic).catch(() => {});
+      console.warn(
+        "⚠️ SxS live hub: existing channel for " + def.name +
+        " was not found. Skipping it; Vestra will not create or rename channels."
+      );
+      continue;
     }
 
+    if (channel.topic !== def.topic) {
+      await channel.setTopic(def.topic).catch(() => {});
+    }
     await ensureReadOnlyPermissions(channel, guild, client, staffRoles);
     resolved[def.key] = channel;
   }
