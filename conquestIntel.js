@@ -314,10 +314,10 @@ function intelEmbed(floor, view = "summary") {
       .setDescription(idLine + "\n\n" +
         "**🌈 Elemental Affinity**\n" +
         "Wind · Water · Fire · Light · Dark\n" +
-        "**14.4K each**\n\n" +
+        "**" + (st.elementalAffinities.match(/[\d.]+K/)?.[0] || "unknown") + " each**\n\n" +
         "**🔰 Elemental Aegis**\n" +
         "Wind · Water · Fire · Light · Dark\n" +
-        "**14.4K each**\n\n" +
+        "**" + (st.elementalAegis.match(/[\d.]+K/)?.[0] || "unknown") + " each**\n\n" +
         "**No confirmed elemental weakness.** The displayed elemental values are equal.");
   }
 
@@ -325,13 +325,13 @@ function intelEmbed(floor, view = "summary") {
     return embed.setTitle("🌀 Skills & Strategy · " + boss.name)
       .setDescription(idLine + "\n\n" +
         "**Observed skill labels**\n" +
-        "**Drag · Ailment · DMG · Summon**\n" +
+        "**" + boss.skillLabels.join(" · ") + "**\n" +
         "Exact triggers and effects have not been confirmed.\n\n" +
         "**⚠️ Biggest threats**\n" +
         "• Crit Rate **" + st.critRate + "** — prioritize survivability.\n" +
         "• Block **" + st.blockRate + "** and DMG RES **" + st.damageResistance + "** — damage may be reduced.\n\n" +
         "**✅ Before your next run**\n" +
-        "Check skill descriptions, protect support units, and plan for possible summons.");
+        (boss.threats || "Check boss skill details.") + "\nPrepare your team for the listed mechanics.");
   }
 
   return embed.setTitle("📊 Quick Stats · " + boss.name)
@@ -371,7 +371,7 @@ function mainEmbed(progress, source, includeArtwork = false) {
     .setColor(0x8176CE)
     .setTitle(title)
     .setDescription(boss
-      ? "**MASTER • LV. " + boss.level + "**\n" +
+      ? "**" + boss.rank.toUpperCase() + " • LV. " + boss.level + "**\n" +
         "❤️ HP " + st.hp + "   •   ⚔️ ATK " + st.atk + "\n" +
         "🛡️ DEF " + st.def + "   •   💨 SPD " + st.spd + "\n\n" +
         "**⚠️ Key threats**\n" +
@@ -379,8 +379,9 @@ function mainEmbed(progress, source, includeArtwork = false) {
         "  •  Crit " + st.critRate + "\n" +
         "Skills: **" + boss.skillLabels.join(" · ") + "**\n\n" +
         "**🎯 Weakness & approach**\n" +
-        "Elemental weakness unconfirmed (all five Affinity/Aegis values: 14.4K). " +
-        "Protect against critical hits and check Drag, Ailment and Summon skill effects."
+        "Elemental weakness unconfirmed (each elemental Affinity/Aegis: " +
+        (st.elementalAffinities.match(/[\d.]+K/)?.[0] || "unknown") + ").\n" +
+        (boss.threats || "Check the skills in-game.")
       : "**Boss identity and level not yet verified.**\n" +
         "Use the game-data reference to inspect the next floor's actual skills, defenses and rank.\n\n" +
         "**🛡️ Preparation:** Check counters, rank differences, and team survivability."
@@ -392,7 +393,7 @@ function mainEmbed(progress, source, includeArtwork = false) {
     })
     .setFooter({
       text: boss
-        ? "F136 boss: in-game screenshots • Floor tracked by Vestra"
+        ? "Boss details: in-game screenshots • Floor tracked by Vestra"
         : "Floor tracked by Vestra • Boss data not verified"
     });
   if (includeArtwork && boss?.artwork) {
