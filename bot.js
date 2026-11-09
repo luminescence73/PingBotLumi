@@ -3865,6 +3865,18 @@ async function applyAshenPermissions(guildOverride = null) {
       .catch(error => console.error(`❌ Permission ${channel.name}: ${error.message}`));
   };
 
+  const syncChildren = async (parent, excludeNames = []) => {
+    if (!parent) return;
+    const excluded = new Set(excludeNames.map(norm));
+    for (const channel of guild.channels.cache.values()) {
+      if (channel.parentId !== parent.id) continue;
+      if (excluded.has(norm(channel.name))) continue;
+      await channel.lockPermissions().catch(error =>
+        console.error(`❌ Could not sync #${channel.name}: ${error.message}`)
+      );
+    }
+  };
+
   const staffAllowText = {
     ViewChannel: true,
     SendMessages: true,
@@ -3923,6 +3935,16 @@ async function applyAshenPermissions(guildOverride = null) {
     }
     if (me) await safeEdit(publicCategory, me, staffAllowText, "Vestra access");
   }
+
+  // Clear stale legacy channel overrides before adding the intentional exceptions below.
+  await syncChildren(welcome);
+  await syncChildren(commons);
+  await syncChildren(sxsGuild, Object.values(LANGUAGE_CHANNELS).map(info =>
+    guild.channels.cache.get(info.channel)?.name
+  ).filter(Boolean));
+  await syncChildren(intel);
+  await syncChildren(community);
+  await syncChildren(voice, ["Command"]);
 
   // Welcome is mostly read-only. Introductions becomes conversational after onboarding.
   for (const name of ["start-here", "announcements", "server-guide", "onboarding", "vestra-settings"]) {
