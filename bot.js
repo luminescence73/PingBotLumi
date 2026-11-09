@@ -1591,6 +1591,40 @@ Use this channel for staff-side member reference and Vestra profile access. Comm
   );
 }
 
+async function setupStaffChatPanel() {
+  const guild = getGuild();
+  const channel = guild?.channels?.cache?.find(
+    ch => ch.type === ChannelType.GuildText && ch.name === "staff-chat"
+  );
+  if (!channel) return;
+
+  await upsertBotPanel(
+    channel,
+    "panel_staff_chat",
+    {
+      content: `# ASHEN / STAFF CHAT
+**This channel is private to Ashen staff.**
+
+Use this space for conversations that belong behind the scenes rather than in public guild channels.
+
+**Good things to discuss here**
+• Guild decisions and upcoming plans
+• Event, tournament, and Conquest coordination
+• Member concerns or situations staff should be aware of
+• Moderation questions and second opinions
+• Coverage, reminders, and staff responsibilities
+• Vestra or Discord changes before they go live
+• SxS strategy or guild organization that needs staff input
+• Anything the staff team needs to talk through privately
+
+Keep member information confidential and only share what staff actually needs to know.`,
+      embeds: [],
+      components: []
+    },
+    "# ASHEN / STAFF CHAT"
+  );
+}
+
 async function setupSuggestionsPanel() {
   const guild = getGuild();
   const channel = guild?.channels?.cache?.find(
@@ -1669,20 +1703,14 @@ async function createHelpThread(interaction, type, emoji, details) {
     return;
   }
 
-  const embed = brandEmbed(
-    `${type}`,
-    details
-  )
-    .addFields({
-      name: "Requested by",
-      value: `${interaction.member}`,
-      inline: true
-    })
-    .setFooter({ text: "Vestra • Ashen Help" })
-    .setTimestamp();
-
   const post = await channel.send({
-    embeds: [embed],
+    content: [
+      `# ${emoji} ${type}`,
+      `**Requested by:** ${interaction.member}`,
+      "",
+      details
+    ].join("\n"),
+    embeds: [],
     allowedMentions: { parse: [] }
   });
 
@@ -4125,33 +4153,18 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
-      const requestEmbed = brandEmbed(
-        "🛡️ New Staff Request",
-        details
-      )
-        .addFields(
-          {
-            name: "Member",
-            value: `${interaction.member}`,
-            inline: true
-          },
-          {
-            name: "Username",
-            value: interaction.user.username,
-            inline: true
-          },
-          {
-            name: "Status",
-            value: "New • Needs Review",
-            inline: true
-          }
-        )
-        .setFooter({ text: "Vestra • Private Staff Request" })
-        .setTimestamp();
-
       await staffChannel.send({
-        content: `<@&${STAFF_ROLES.LEADER}> <@&${STAFF_ROLES.DEPUTY}> <@&${STAFF_ROLES.OFFICERS}>`,
-        embeds: [requestEmbed],
+        content: [
+          `<@&${STAFF_ROLES.LEADER}> <@&${STAFF_ROLES.DEPUTY}> <@&${STAFF_ROLES.OFFICERS}>`,
+          "",
+          "# 🛡️ NEW STAFF REQUEST",
+          `**Member:** ${interaction.member}`,
+          `**Username:** ${interaction.user.username}`,
+          "**Status:** New • Needs Review",
+          "",
+          details
+        ].join("\n"),
+        embeds: [],
         allowedMentions: {
           parse: [],
           roles: [
@@ -4512,30 +4525,15 @@ client.on(Events.InteractionCreate, async interaction => {
         intro?.isTextBased()
       ) {
         await intro.send({
-          content:
-            `${member}`,
-
-          embeds: [
-            welcomeCard(
-              member,
-
-              LANGUAGES[
-                session.language
-              ].name,
-
-              session.playstyle
-                ? PLAYSTYLE[
-                    session.playstyle
-                  ].name
-                : "Not specified",
-
-              session.social
-                ? SOCIAL[
-                    session.social
-                  ].name
-                : "Not specified"
-            )
-          ],
+          content: [
+            "# ✦ NEW RECRUIT",
+            `${member} has completed onboarding and joined Ashen Warriors.`,
+            "",
+            `**Language:** ${LANGUAGES[session.language].name}`,
+            `**Playstyle:** ${session.playstyle ? PLAYSTYLE[session.playstyle].name : "Not specified"}`,
+            `**Social:** ${session.social ? SOCIAL[session.social].name : "Not specified"}`
+          ].join("\n"),
+          embeds: [],
 
           allowedMentions: {
             parse: [],
@@ -4939,6 +4937,7 @@ client.once(Events.ClientReady, async readyClient => {
     ["Introductions", setupIntroductionPanel],
     ["Staff Requests", setupStaffRequestsPanel],
     ["Guild Members", setupGuildMembersPanel],
+    ["Staff Chat", setupStaffChatPanel],
     ["Suggestions", setupSuggestionsPanel],
     ["Bot Logs", setupBotLogsPanel],
     ["Guild Ping Log", setupGuildPingsPanel],
