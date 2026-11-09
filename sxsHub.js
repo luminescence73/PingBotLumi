@@ -212,4 +212,233 @@ function parseRoadmapWeek(html) {
   if (comingIndex >= 0) {
     for (const line of lines.slice(comingIndex + 1, comingIndex + 20)) {
       if (/^(?:Everything|Milestones|Events|Season All seasons)/i.test(line)) break;
-      if (/^(?:Mon|Tue|Wed|Thu|Fri|S
+      if (/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+[A-Z][a-z]{2}\s+\d{1,2}/.test(line)) {
+        upcoming.push(line);
+      }
+      if (upcoming.length >= 4) break;
+    }
+  }
+
+  return { reset, upcoming };
+}
+
+function parseCodes(html) {
+  const lines = htmlToLines(html);
+  const start = Math.max(0, lines.findIndex(line => /Copy all codes/i.test(line)) + 1);
+  const codes = [];
+  const seen = new Set();
+
+  for (let i = start; i < lines.length - 1; i++) {
+    const code = lines[i];
+    if (!/^[A-Z0-9]{4,30}$/.test(code) || seen.has(code)) continue;
+
+    const rewards = [];
+    for (let j = i + 1; j < Math.min(lines.length, i + 5); j++) {
+      if (/^Tap to copy$/i.test(lines[j])) break;
+      if (/^[A-Z0-9]{4,30}$/.test(lines[j])) break;
+      rewards.push(lines[j]);
+    }
+
+    if (!rewards.length) continue;
+    seen.add(code);
+    codes.push({ code, reward: rewards.join(" · ") });
+  }
+
+  return codes;
+}
+
+function parseSeasonIndex(html, currentSeasonNumber) {
+  const anchors = extractHtmlAnchors(html)
+    .filter(anchor => /\/seasons\/s\d+$/i.test(anchor.href));
+
+  const parsed = anchors.map(anchor => {
+    const match = anchor.label.match(
+      /Season\s+(\d+)\s+(Past|Current|Upcoming)\s+(.+?)\s+Class tier\s+T(\d+)\s*·\s*(.+?)(?=\s+\d+\s+builds|$)/i
+    );
+
+    if (!match) return null;
+    return {
+      number: Number(match[1]),
+      status: match[2],
+      region: match[3].trim(),
+      tier: Number(match[4]),
+      dateRange: match[5].trim(),
+      href: anchor.href.startsWith("http") ? anchor.href : `https://www.valkyrie.tips${anchor.href}`
+    };
+  }).filter(Boolean);
+
+  const current = parsed.find(item => item.number === currentSeasonNumber) ||
+    parsed.find(item => /^Current$/i.test(item.status)) || null;
+  const next = current
+    ? parsed.filter(item => item.number > current.number).sort((a, b) => a.number - b.number)[0] || null
+    : null;
+
+  return { current, next, all: parsed };
+}
+
+function monthIndex(shortMonth) {
+  return ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].indexOf(shortMonth);
+}
+
+function parseMilestoneDate(label) {
+  const match = String(label).match(/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+([A-Z][a-z]{2})\s+(\d{1,2})$/);
+  if (!match) return null;
+
+  const month = monthIndex(match[1]);
+  if (month < 0) return null;
+
+  const now = new Date();
+  let year = Number(new Intl.DateTimeFormat("en-US", {
+    timeZone: TZ,
+    year: "numeric"
+  }).format(now));
+
+  let date = new Date(Date.UTC(year, month, Number(match[2]), 12));
+  if (date.getTime() < now.getTime() - 120 * 86400_000) {
+    year += 1;
+    date = new Date(Date.UTC(year, month, Number(match[2]), 12));
+  }
+
+  return date;
+}
+
+function parseSeasonPage(html, fallbackSeason) {
+  const lines = htmlToLines(html);
+  const tierLine = lines.find(line => /^T\d+\s+.+?tier list/i.test(line)) || "";
+  const tierMatch = tierLine.match(/^T(\d+)\s+(.+?)\s+tier list/i);
+  const tierIndex = tierLine ? lines.indexOf(tierLine) : -1;
+  const classes = tierIndex >= 0 ? lines[tierIndex + 1] || null : null;
+
+  const milestoneStart = lines.findIndex(line => /^Milestones/i.test(line));
+  const milestoneEnd = lines.findIndex((line, index) => index > milestoneStart && /^Dungeon gear/i.test(line));
+  const section = milestoneStart >= 0
+    ? lines.slice(milestoneStart + 1, milestoneEnd > milestoneStart ? milestoneEnd : lines.length)
+    : [];
+  const milestones = [];
+
+  for (let i = 0; i < section.length; i++) {
+    const date = parseMilestoneDate(section[i]);
+    if (!date) continue;
+
+    const label = section[i];
+    const detail = [];
+    let serverDay = null;
+
+    for (let j = i + 1; j < section.length; j++) {
+      if (parseMilestoneDate(section[j])) break;
+      const dayMatch = section[j].match(/^Server day\s+(\d+)/i);
+      if (dayMatch) {
+        serverDay = Number(dayMatch[1]);
+        continue;
+      }
+      if (/^(?:✓\s*)?Confirmed$/i.test(section[j])) continue;
+      if (/^(?:View|Full roadmap)/i.test(section[j])) continue;
+      detail.push(section[j]);
+    }
+
+    milestones.push({ label, date, serverDay, detail: detail.slice(0, 5) });
+  }
+
+  return {
+    seasonNumber: fallbackSeason?.number ?? null,
+    tier: tierMatch ? Number(tierMatch[1]) : null,
+    region: tierMatch?.[2]?.trim() || fallbackSeason?.region || null,
+    classes,
+    milestones
+  };
+}
+
+function splitDiscordText(lines, max = 3600) {
+  const chunks = [];
+  let current = "";
+
+  for (const line of lines) {
+    const candidate = current ? `${current}\n${line}` : line;
+    if (candidate.length > max && current) {
+      chunks.push(current);
+      current = line;
+    } else {
+      current = candidate;
+    }
+  }
+
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+function formatMilestone(item) {
+  const day = item.serverDay ? ` • Server Day ${item.serverDay}` : "";
+  const detail = item.detail.slice(0, 3).join(" · ");
+  return `**${item.label}${day}**\n${detail || "Progression milestone"}`;
+}
+
+function externalUrl(href) {
+  if (!href) return null;
+  if (/^https?:\/\//i.test(href)) return href;
+  return `https://www.valkyrie.tips${href.startsWith("/") ? "" : "/"}${href}`;
+}
+
+async function fetchLiveData() {
+  const homeHtml = await fetchHtml(SOURCE.home);
+  const home = parseHome(homeHtml);
+  if (!home.season?.number) throw new Error("Current season could not be detected from the SxS source.");
+
+  const seasonUrl = `${SOURCE.seasons}/s${home.season.number}`;
+  const [seasonHtml, codesHtml, seasonsHtml, roadmapHtml] = await Promise.all([
+    fetchHtml(seasonUrl),
+    fetchHtml(SOURCE.codes),
+    fetchHtml(SOURCE.seasons),
+    fetchHtml(SOURCE.roadmap)
+  ]);
+
+  const season = parseSeasonPage(seasonHtml, home.season);
+  const seasonIndex = parseSeasonIndex(seasonsHtml, home.season.number);
+  const roadmapWeek = parseRoadmapWeek(roadmapHtml);
+  const codes = parseCodes(codesHtml);
+  const codeMap = new Map(codes.map(item => [item.code, item]));
+
+  for (const code of home.currentCodeCandidates) {
+    if (!codeMap.has(code)) {
+      codeMap.set(code, {
+        code,
+        reward: "Current code — open the live codes page for reward details."
+      });
+    }
+  }
+
+  return {
+    fetchedAt: new Date().toISOString(),
+    seasonUrl,
+    home,
+    season,
+    seasonIndex,
+    roadmapWeek,
+    codes: [...codeMap.values()]
+  };
+}
+
+function linkButton(label, url) {
+  return new ButtonBuilder()
+    .setStyle(ButtonStyle.Link)
+    .setLabel(label)
+    .setURL(url);
+}
+
+function buttonRow(...buttons) {
+  return new ActionRowBuilder().addComponents(...buttons);
+}
+
+function timestampEmbed(embed, fetchedAt, stale = false) {
+  embed
+    .setColor(BRAND_COLOR)
+    .setFooter({ text: stale ? "Vestra | Last confirmed SxS data" : "Vestra | Live SxS data" });
+
+  if (fetchedAt) embed.setTimestamp(new Date(fetchedAt));
+  return embed;
+}
+
+function buildPayloads(data, stale = false) {
+  const seasonNumber = data.home.season.number;
+  const region = data.season.region || data.home.season.region || "Current region";
+  const serverDay = data.home.season.serverDay;
+  cons
