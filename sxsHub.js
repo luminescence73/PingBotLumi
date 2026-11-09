@@ -569,11 +569,18 @@ function payloadHash(payload) {
 async function findBoardMessage(channel, botUserId) {
   const pins = await channel.messages.fetchPins().catch(() => null);
   const pinnedItems = pins?.items ?? pins;
-  const pinned = pinnedItems?.find?.(message => message.author.id === botUserId);
-  if (pinned) return pinned;
+  const pinList = Array.isArray(pinnedItems)
+    ? pinnedItems
+    : pinnedItems?.values ? [...pinnedItems.values()] : [];
+  for (const item of pinList) {
+    const message = item?.message ?? item;
+    if (message?.author?.id !== botUserId || !message?.id) continue;
+    const fetched = await channel.messages.fetch(message.id).catch(() => null);
+    if (fetched?.author?.id === botUserId) return fetched;
+  }
 
   const recent = await channel.messages.fetch({ limit: 25 }).catch(() => null);
-  return recent?.find(message => message.author.id === botUserId) || null;
+  return recent?.find(message => message?.author?.id === botUserId) || null;
 }
 
 async function ensureReadOnlyPermissions(channel, guild, client, staffRoles) {
