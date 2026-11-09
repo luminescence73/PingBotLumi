@@ -888,16 +888,16 @@ function reminderMenu(language) {
       .setMaxValues(Object.keys(REMINDERS).length + Object.keys(TOURNAMENTS).length + 1)
       .addOptions(
         ...Object.entries(REMINDERS).map(([key, item]) => ({
-          label: item.name,
+          label: localizedOnboardingEvent(language, key),
           value: key,
           emoji: item.emoji
         })),
         ...Object.entries(TOURNAMENTS).map(([key, item]) => ({
-          label: `${item.name} Pings`,
+          label: localizedOnboardingEvent(language, key) + onboardingLocale(language).suffix,
           value: `tournament:${key}`,
           emoji: item.emoji
         })),
-        { label: "No reminders", value: "none", emoji: "🔕" }
+        { label: localizedOnboardingChoice(language, "none"), value: "none", emoji: "🔕" }
       )
   );
 }
@@ -918,27 +918,19 @@ ${description}
 }
 
 function onboardingSummaryEmbed(session) {
-  const language = session.language ? LANGUAGES[session.language] : null;
+  const language = session.language || "english";
+  const copy = onboardingLocale(language);
   const reminderNames = (session.reminders || []).map(key => {
-    if (REMINDERS[key]) return REMINDERS[key].name;
-    if (key.startsWith("tournament:")) {
-      const tournament = TOURNAMENTS[key.split(":")[1]];
-      return tournament ? tournament.name : key;
-    }
+    if (REMINDERS[key]) return localizedOnboardingEvent(language, key);
+    if (key.startsWith("tournament:")) return localizedOnboardingEvent(language, key.split(":")[1]);
     return key;
   });
-  const playstyle = session.playstyle ? PLAYSTYLE[session.playstyle] : null;
-  const social = session.social ? SOCIAL[session.social] : null;
-
-  return brandEmbed(
-    "ASHEN | INDUCTION COMPLETE",
-    "Your roles and preferences are ready. Confirm your selections below."
-  ).addFields(
-    { name: "Language", value: language?.name || "Not selected", inline: true },
-    { name: "Playstyle", value: playstyle?.name || "Skipped", inline: true },
-    { name: "Social", value: social?.name || "Skipped", inline: true },
-    { name: "Alerts", value: reminderNames.join("\n") || "None" }
-  ).setFooter({ text: "Vestra | Settings can be changed anytime" });
+  return brandEmbed(copy.review[0], copy.review[1]).addFields(
+    { name: copy.review[2], value: LANGUAGES[language]?.name || copy.review[7], inline: true },
+    { name: copy.review[4], value: session.playstyle ? localizedOnboardingChoice(language, session.playstyle) : copy.review[7], inline: true },
+    { name: copy.review[5], value: session.social ? localizedOnboardingChoice(language, session.social) : copy.review[7], inline: true },
+    { name: copy.review[3], value: reminderNames.join("\n") || copy.review[6] }
+  ).setFooter({ text: copy.review[8] });
 }
 
 function playstyleMenu(language) {
@@ -947,10 +939,10 @@ function playstyleMenu(language) {
       .setCustomId("onboard_playstyle")
       .setPlaceholder(TEXT[language].playstyle)
       .addOptions(
-        { label: "Casual", value: "casual", emoji: "🌿" },
-        { label: "Competitive", value: "competitive", emoji: "⚔️" },
-        { label: "Both", value: "both", emoji: "🎮" },
-        { label: "Skip", value: "skip", emoji: "⏭️" }
+        { label: localizedOnboardingChoice(language, "casual"), value: "casual", emoji: "🌿" },
+        { label: localizedOnboardingChoice(language, "competitive"), value: "competitive", emoji: "⚔️" },
+        { label: localizedOnboardingChoice(language, "both"), value: "both", emoji: "🎮" },
+        { label: localizedOnboardingChoice(language, "skip"), value: "skip", emoji: "⏭️" }
       )
   );
 }
@@ -961,10 +953,10 @@ function socialMenu(language) {
       .setCustomId("onboard_social")
       .setPlaceholder(TEXT[language].social)
       .addOptions(
-        { label: "Chatty", value: "chatty", emoji: "💬" },
-        { label: "Quiet", value: "quiet", emoji: "🌙" },
-        { label: "Either", value: "either", emoji: "✨" },
-        { label: "Skip", value: "skip", emoji: "⏭️" }
+        { label: localizedOnboardingChoice(language, "chatty"), value: "chatty", emoji: "💬" },
+        { label: localizedOnboardingChoice(language, "quiet"), value: "quiet", emoji: "🌙" },
+        { label: localizedOnboardingChoice(language, "either"), value: "either", emoji: "✨" },
+        { label: localizedOnboardingChoice(language, "skip"), value: "skip", emoji: "⏭️" }
       )
   );
 }
@@ -3900,13 +3892,7 @@ client.on(Events.InteractionCreate, async interaction => {
       );
 
       return interaction.editReply({
-        content: onboardingStepContent(
-          "STEP 1 OF 4",
-          "🌎 Set Your Language",
-          `Pick the language Vestra should use for your **notifications** and 🌐 reaction translations.
-
-You can unlock additional language chats later in Role Preferences.`
-        ),
+        content: onboardingStageContent("english", 1),
         embeds: [],
         components: [
           languageMenu()
@@ -3951,13 +3937,7 @@ You can unlock additional language chats later in Role Preferences.`
       );
 
       return interaction.editReply({
-        content: onboardingStepContent(
-          "STEP 2 OF 4",
-          "🔔 Choose Your Alerts",
-          `${TEXT[language].reminders}
-
-Choose **as many as you want** from the guild and Server/Nexus Tournament reminders. You can change these anytime.`
-        ),
+        content: onboardingStageContent(language, 2),
         embeds: [],
         components: [
           reminderMenu(
@@ -4006,13 +3986,7 @@ Choose **as many as you want** from the guild and Server/Nexus Tournament remind
       );
 
       return interaction.editReply({
-        content: onboardingStepContent(
-          "STEP 3 OF 4",
-          "🎮 Pick Your Playstyle",
-          `${TEXT[session.language].playstyle}
-
-This is just for fun and helps other members get a feel for how you like to play.`
-        ),
+        content: onboardingStageContent(session.language, 3),
         embeds: [],
         components: [
           playstyleMenu(
@@ -4057,13 +4031,7 @@ This is just for fun and helps other members get a feel for how you like to play
       );
 
       return interaction.editReply({
-        content: onboardingStepContent(
-          "STEP 4 OF 4",
-          "💬 Set Your Social Vibe",
-          `${TEXT[session.language].social}
-
-There’s no wrong answer — this just gives the community a small hint about how you like to interact.`
-        ),
+        content: onboardingStageContent(session.language, 4),
         embeds: [],
         components: [
           socialMenu(
@@ -4107,36 +4075,8 @@ There’s no wrong answer — this just gives the community a small hint about h
         session
       );
 
-      const language = LANGUAGES[session.language];
-      const playstyle = session.playstyle ? PLAYSTYLE[session.playstyle] : null;
-      const social = session.social ? SOCIAL[session.social] : null;
-      const reminderNames = (session.reminders || []).map(key => {
-        if (REMINDERS[key]) return `${REMINDERS[key].emoji} ${REMINDERS[key].name}`;
-        if (key.startsWith("tournament:")) {
-          const tournament = TOURNAMENTS[key.split(":")[1]];
-          return tournament ? `${tournament.emoji} ${tournament.name}` : key;
-        }
-        return key;
-      });
-
       return interaction.editReply({
-        content: `# ✅ Ready to Join Ashen Warriors
-
-Everything looks good! Review your choices below, then press **Finish Onboarding**.
-
-## 🌎 Primary Language
-${language.emoji} **${language.name}**
-
-## 🔔 Pings
-${reminderNames.length ? reminderNames.join("\n") : "🔕 No reminders"}
-
-## 🎮 Playstyle
-${playstyle ? `${playstyle.emoji} **${playstyle.name}**` : "Not specified"}
-
-## 💬 Social Vibe
-${social ? `${social.emoji} **${social.name}**` : "Not specified"}
-
-*You can change all of this later in Role Preferences.*`,
+        content: onboardingReviewContent(session),
         embeds: [],
         components: [
           finishButton(
@@ -4313,13 +4253,7 @@ ${social ? `${social.emoji} **${social.name}**` : "Not specified"}
         .catch(() => {});
 
       return interaction.editReply({
-        content: `# ✅ Welcome to Ashen Warriors!
-
-${TEXT[session.language].done}
-
-Your roles and Vestra preferences are saved. The rest of Ashen is ready for you now.
-
-Head into the server, say hi, and make yourself at home. 🖤`,
+        content: onboardingCompleteContent(session.language),
         embeds: [],
         components: []
       });
