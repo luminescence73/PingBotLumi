@@ -418,8 +418,29 @@ const RESETTABLE_ROLES = new Set([
   ...Object.values(TOURNAMENTS).map(x => x.role)
 ]);
 
+function isTempOwnerRole(role) {
+  return !!role?.name && /^(?:temp|temporary)[\s_-]*owners?$/i.test(role.name.trim());
+}
+
+function commandStaffRoleIds(guild) {
+  const ids = new Set([
+    STAFF_ROLES.ADMIN,
+    STAFF_ROLES.LEADER,
+    STAFF_ROLES.DEPUTY,
+    STAFF_ROLES.OFFICERS
+  ]);
+
+  for (const role of guild?.roles?.cache?.values?.() || []) {
+    if (isTempOwnerRole(role)) ids.add(role.id);
+  }
+
+  return [...ids];
+}
+
 function isStaff(member) {
-  return Object.values(STAFF_ROLES).some(roleId => member?.roles?.cache?.has(roleId));
+  if (!member) return false;
+  if (member.guild?.ownerId === member.id) return true;
+  return commandStaffRoleIds(member.guild).some(roleId => member.roles?.cache?.has(roleId));
 }
 
 // =====================================================
