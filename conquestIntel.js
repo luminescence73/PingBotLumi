@@ -241,6 +241,63 @@ const BOSS_DATA = Object.freeze({
     skillLabels: Object.freeze(["DMG", "DMG", "Buff", "DMG"]),
     threats: "Three damage-type skills and a Buff skill are visible. Watch its 100% Crit DMG, 61% Crit Rate and 19.4M DEF; inspect the Buff's effect before adjusting your team's defenses.",
     note: "Source: supplied game screenshots of F140; floor was locked."
+  }),
+  141: Object.freeze({
+    name: "Aqua Shaman", emoji: "🌊",
+    artwork: { filename: "aqua-shaman-f141.webp", asset: "./assets/conquest/aqua-shaman-f141.webp.b64" },
+    level: 376, rank: "Master",
+    stats: Object.freeze({
+      hp: "413B", atk: "15.6M", def: "18.7M", spd: "7.07M",
+      resilience: "240", critRate: "61.1%", critDamage: "50%",
+      critResistance: "32.3%", blockRate: "53.2%", blockEfficiency: "100%",
+      accuracy: "27.3%", damageBoost: "45.6%", damageResistance: "43.8%",
+      healingBoost: "0%", effectHitRate: "147K", effectResistance: "147K",
+      elementalMastery: "184K", elementalResistance: "184K",
+      physicalMastery: "184K", physicalResistance: "184K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 15.4K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 15.4K each"
+    }),
+    skillLabels: Object.freeze(["DMG","DMG","Dispel","DMG","Counter"]),
+    threats: "Three DMG skills, Dispel and Counter are shown. Check what triggers the Counter skill before using multiple strikes, and watch for buff removal from Dispel.",
+    note: "Source: user-provided screenshots; this Conquest floor was locked."
+  }),
+  142: Object.freeze({
+    name: "Armored General", emoji: "⚔️",
+    artwork: { filename: "armored-general-f142.webp", asset: "./assets/conquest/armored-general-f142.webp.b64" },
+    level: 382, rank: "Master",
+    stats: Object.freeze({
+      hp: "429B", atk: "17.4M", def: "19.4M", spd: "7.7M",
+      resilience: "240", critRate: "61.2%", critDamage: "50%",
+      critResistance: "32.4%", blockRate: "53.3%", blockEfficiency: "100%",
+      accuracy: "27.4%", damageBoost: "45.6%", damageResistance: "43.9%",
+      healingBoost: "0%", effectHitRate: "155K", effectResistance: "155K",
+      elementalMastery: "193K", elementalResistance: "193K",
+      physicalMastery: "193K", physicalResistance: "193K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 15.6K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 15.6K each"
+    }),
+    skillLabels: Object.freeze(["DMG","DMG","DMG","Movement"]),
+    threats: "Three DMG skills and Movement are visible. Watch for repositioning and keep fragile allies clear of possible attack paths. Exact ranges and triggers need confirmation.",
+    note: "Source: user-provided screenshots; this Conquest floor was locked."
+  }),
+  143: Object.freeze({
+    name: "Nine-Tailed Fox", emoji: "🦊",
+    artwork: { filename: "nine-tailed-fox-f143.webp", asset: "./assets/conquest/nine-tailed-fox-f143.webp.b64" },
+    level: 388, rank: "Master",
+    stats: Object.freeze({
+      hp: "444B", atk: "16.8M", def: "20.1M", spd: "7.6M",
+      resilience: "240", critRate: "61.3%", critDamage: "50%",
+      critResistance: "32.4%", blockRate: "53.4%", blockEfficiency: "100%",
+      accuracy: "27.4%", damageBoost: "45.7%", damageResistance: "43.9%",
+      healingBoost: "0%", effectHitRate: "163K", effectResistance: "163K",
+      elementalMastery: "204K", elementalResistance: "204K",
+      physicalMastery: "204K", physicalResistance: "204K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 15.9K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 15.9K each"
+    }),
+    skillLabels: Object.freeze(["DMG","Debuff","Buff","Summon"]),
+    threats: "DMG, Debuff, Buff and Summon are visible. Check when summons appear and which status effects are applied; keep support units safe. Exact effects are not yet verified.",
+    note: "Source: user-provided screenshots; this Conquest floor was locked."
   })
 });
 
