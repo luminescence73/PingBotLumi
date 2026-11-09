@@ -450,10 +450,14 @@ async function editPanel() {
        item.embeds?.[0]?.title?.includes("CONQUEST INTEL"))) || null;
   }
 
+  const data = payload(progress, source, artwork);
   if (message) {
-    await message.edit(payload(progress, source, artwork));
+    // Replace the previous image rather than accumulating attachments.
+    await message.edit(data);
   } else {
-    message = await channel.send(payload(progress, source, artwork));
+    // New messages need the file upload but no retained-attachments field.
+    delete data.attachments;
+    message = await channel.send(data);
   }
   await writeState(PANEL_KEY, { channelId: channel.id, messageId: message.id });
   if (!message.pinned) await message.pin().catch(() => {});
