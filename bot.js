@@ -3034,7 +3034,7 @@ const GUILD_PING_DIVIDER = "━━━━━━━━━━━━━━━━━�
 
 function isGuildPingAlertRecord(content) {
   const value = String(content || "");
-  const header = /^<@&\\d+>\\s+\\*\\*/.test(value);
+  const header = /^<@&\d+>\s+\*\*/.test(value);
   const spaced = value.startsWith(GUILD_PING_DIVIDER + "\n");
   const hasDelivery = value.includes("🌎 Vestra delivered ") ||
     value.includes("🌎 Localized delivery count was not recorded.");
