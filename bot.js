@@ -1577,7 +1577,7 @@ async function setupGuildMembersPanel() {
 **CURRENT ROSTER**
 ${humanMembers.size} members · ${staffCount} staff · ${onboardedCount} inducted
 
-Use this channel for staff-side member reference and Vestra profile access. Community showcase posts remain in #community-highlights.`
+Use this channel for staff-side member reference and Vestra profile access. Community showcase posts remain in #community-highlights.`;
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("settings_card")
@@ -1588,6 +1588,53 @@ Use this channel for staff-side member reference and Vestra profile access. Comm
     channel, "panel_guild_members",
     { content, embeds: [], components: [row] },
     "# ASHEN / GUILD MEMBERS"
+  );
+}
+
+async function setupSuggestionsPanel() {
+  const guild = getGuild();
+  const channel = guild?.channels?.cache?.find(
+    ch => ch.type === ChannelType.GuildText && ch.name === "suggestions"
+  );
+  if (!channel) return;
+
+  await upsertBotPanel(
+    channel,
+    "panel_suggestions",
+    {
+      content: `# ASHEN / SUGGESTIONS
+Share ideas that could improve Ashen Warriors, Vestra, events, resources, or the server itself.
+
+Keep suggestions specific and constructive so staff can review them easily.`,
+      embeds: [],
+      components: []
+    },
+    "# ASHEN / SUGGESTIONS"
+  );
+}
+
+async function setupBotLogsPanel() {
+  const guild = getGuild();
+  const channel = guild?.channels?.cache?.find(
+    ch => ch.type === ChannelType.GuildText && ch.name === "bot-logs"
+  );
+  if (!channel) return;
+
+  const started = Math.floor(Date.now() / 1000);
+  await upsertBotPanel(
+    channel,
+    "panel_bot_logs",
+    {
+      content: `# VESTRA / BOT LOGS
+**Operational status**
+
+Vestra completed startup at <t:${started}:F>.
+
+Use this private channel for Vestra deployment notes, troubleshooting, and operational checks.`,
+      embeds: [],
+      components: []
+    },
+    "# VESTRA / BOT LOGS"
   );
 }
 
@@ -4891,6 +4938,8 @@ client.once(Events.ClientReady, async readyClient => {
     ["Introductions", setupIntroductionPanel],
     ["Staff Requests", setupStaffRequestsPanel],
     ["Guild Members", setupGuildMembersPanel],
+    ["Suggestions", setupSuggestionsPanel],
+    ["Bot Logs", setupBotLogsPanel],
     ["Guild Ping Log", setupGuildPingsPanel],
     ["Live Event Board", setupEventBoard],
     ["Sword x Staff Live Hub", () => setupSxsHub({
