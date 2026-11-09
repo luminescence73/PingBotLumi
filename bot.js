@@ -1635,7 +1635,7 @@ Use this space for conversations that belong behind the scenes rather than in pu
 • SxS strategy or guild organization that needs staff input
 • Anything the staff team needs to talk through privately
 
-Keep member information confidential and only share what staff actually needs to know.`,
+Keep member information confidential and only share what staff actually needs to know.\n\n**Vestra build:** Intro Sync v4`,
       embeds: [],
       components: [
         new ActionRowBuilder().addComponents(
