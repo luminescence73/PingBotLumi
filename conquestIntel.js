@@ -225,7 +225,7 @@ async function updatePanel() {
   if (panel) await panel.edit(payload);
   else panel = await channel.send(payload);
   await saveState(PANEL_STATE, { channelId: channel.id, messageId: panel.id });
-  await panel.pin().catch(() => {});
+  if (!panel.pinned) await panel.pin().catch(() => {});
   return panel;
 }
 
