@@ -1637,7 +1637,15 @@ Use this space for conversations that belong behind the scenes rather than in pu
 
 Keep member information confidential and only share what staff actually needs to know.`,
       embeds: [],
-      components: []
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId("admin_sync_introductions")
+            .setLabel("Sync Introductions")
+            .setEmoji("🔄")
+            .setStyle(ButtonStyle.Primary)
+        )
+      ]
     },
     "# ASHEN / STAFF CHAT"
   );
@@ -1755,12 +1763,16 @@ async function createHelpThread(interaction, type, emoji, details) {
   });
 }
 
-async function migrateLegacyIntroductions() {
-  const completionKey = "introductions_full_rebuild_sol_v3";
-  if ((await dbGetState(completionKey))?.completed) return;
+async function migrateLegacyIntroductions(force = false) {
+  const completionKey = "introductions_full_rebuild_sol_v4";
+  if (!force && (await dbGetState(completionKey))?.completed) {
+    return { skipped: true, reason: "already_completed" };
+  }
 
   const channel = await client.channels.fetch(CHANNELS.INTRODUCTIONS).catch(() => null);
-  if (!channel?.isTextBased() || !channel.messages?.fetch) return;
+  if (!channel?.isTextBased() || !channel.messages?.fetch) {
+    return { skipped: true, reason: "introductions_channel_unavailable" };
+  }
 
   await channel.guild.members.fetch().catch(() => {});
 
@@ -2016,9 +2028,21 @@ Welcome new recruits. Make them part of the guild.`;
     });
   }
 
+  const summary = {
+    succeeded,
+    scannedIntroMessages: vestraIntroMessages.length,
+    removed: vestraIntroMessages.length - deleteFailures,
+    deleteFailures,
+    rebuilt,
+    rebuildFailures,
+    uniqueRecords: records.size
+  };
+
   console.log(
-    `${succeeded ? "✅" : "⚠️"} Introductions rebuild v3: ${vestraIntroMessages.length - deleteFailures} old intro message(s) removed, ${deleteFailures} delete failure(s), ${rebuilt} unique recruit card(s) recreated, ${rebuildFailures} rebuild failure(s).`
+    `${succeeded ? "✅" : "⚠️"} Introductions rebuild v4: ${summary.removed} old intro message(s) removed, ${deleteFailures} delete failure(s), ${rebuilt} unique recruit card(s) recreated, ${rebuildFailures} rebuild failure(s).`
   );
+
+  return summary;
 }
 
 // =====================================================
@@ -4944,6 +4968,40 @@ client.on(Events.InteractionCreate, async interaction => {
       });
     }
 
+    if (interaction.isButton() && interaction.customId === "admin_sync_introductions") {
+      if (!isStaff(interaction.member)) {
+        return interaction.reply({
+          content: "❌ Only Ashen staff can run the introductions sync.",
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+      const result = await migrateLegacyIntroductions(true);
+
+      if (result?.reason === "introductions_channel_unavailable") {
+        return interaction.editReply(
+          "❌ Vestra cannot access the configured #introductions channel."
+        );
+      }
+
+      if (!result) {
+        return interaction.editReply(
+          "⚠️ The introductions sync ran but did not return a result. Check #bot-logs / Railway logs."
+        );
+      }
+
+      return interaction.editReply([
+        result.succeeded ? "✅ **Introductions sync complete.**" : "⚠️ **Introductions sync finished with errors.**",
+        `Found: **${result.scannedIntroMessages ?? 0}** old Vestra intro/guide messages`,
+        `Deleted: **${result.removed ?? 0}**`,
+        `Delete failures: **${result.deleteFailures ?? 0}**`,
+        `Unique member cards rebuilt: **${result.rebuilt ?? 0}**`,
+        `Rebuild failures: **${result.rebuildFailures ?? 0}**`
+      ].join("\n"));
+    }
+
     // -------------------------------------------------
     // HELP BUTTONS
     // -------------------------------------------------
@@ -5809,7 +5867,7 @@ client.once(Events.ClientReady, async readyClient => {
 
   // Safe one-time migrations of Vestra's older generated messages.
   void migrateLegacyIntroductions().catch(error => {
-    console.error("❌ Could not complete introductions rebuild v3:", error);
+    console.error("❌ Could not complete introductions rebuild v4:", error);
   });
 
   void migrateLegacyAlertHistory().catch(error => {
