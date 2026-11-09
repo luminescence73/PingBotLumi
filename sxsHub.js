@@ -512,15 +512,14 @@ function buildPayloads(data, stale = false) {
   const database = plainBoard(
     "SWORD X STAFF | DATABASE",
     [
-      `Reference data for **Season ${seasonNumber}** and the rest of Sword x Staff.`,
-      "",
-      "**Skills & Charms** — rarity scaling, effects, and keywords",
-      "**Relics** — season, region, element, and rarity filters",
-      "**Fantomons & Companions** — abilities, skills, and progression",
-      "**Equipment & Gems** — stat affixes and value ranges",
-      "**Recipes & Food** — ingredients and effects",
-      "**Dungeon Gear** — sets and 2-piece / 4-piece bonuses",
-      "**Monsters, Skins & Item Values** — additional reference data"
+      `Reference information for **Season ${seasonNumber}** and the rest of Sword x Staff.`,
+      "\n**Skills & Charms**\nRarity scaling, effects, and keywords",
+      "\n**Relics**\nSeason, region, element, and rarity filters",
+      "\n**Fantomons & Companions**\nAbilities, skills, and progression",
+      "\n**Equipment & Gems**\nStat affixes and value ranges",
+      "\n**Recipes & Food**\nIngredients and effects",
+      "\n**Dungeon Gear**\nSets and 2-piece / 4-piece bonuses",
+      "\n**Monsters, Skins & Item Values**\nAdditional reference data"
     ],
     SOURCE.database,
     stale
