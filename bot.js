@@ -162,6 +162,13 @@ async function initDatabase() {
       PRIMARY KEY (source_role_id, language_key)
     )`,
 
+    `CREATE TABLE IF NOT EXISTS guild_ping_member_mirrors (
+      source_message_id TEXT PRIMARY KEY,
+      member_channel_id TEXT NOT NULL,
+      mirrored_message_id TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+
     `CREATE TABLE IF NOT EXISTS bot_state (
       key TEXT PRIMARY KEY,
       value JSONB NOT NULL,
@@ -1243,6 +1250,28 @@ Staff requests are handled privately.`;
     CHANNELS.HELP, "panel_help_center",
     { content, embeds: [], components: [row1, row2] },
     "# ASHEN / SUPPORT"
+  );
+}
+
+async function setupMemberGuildPingsPanel() {
+  const channel = await getMemberGuildPingsChannel();
+  if (!channel) {
+    console.warn("⚠️ Member guild-pings room is missing; no new room will be created.");
+    return;
+  }
+
+  const content = `# ASHEN / GUILD PINGS
+Official guild and tournament alerts are mirrored here for the whole guild.
+
+**NOTIFICATIONS**
+Members who subscribe receive one translated notification in their chosen language's General channel. This feed does not send additional pings.
+
+Change your event subscriptions in <#${CHANNELS.PREFERENCES}>.`;
+
+  await upsertBotPanel(
+    channel, "panel_member_guild_pings",
+    { content, embeds: [], components: [] },
+    "# ASHEN / GUILD PINGS"
   );
 }
 
@@ -3012,15 +3041,76 @@ function formatAlertHistoryMessage(roleId, label, text, deliveredCount) {
   ].join("\n");
 }
 
+async function mirrorStaffGuildPingRecord(sourceMessage) {
+  if (!sourceMessage?.id || sourceMessage.author?.id !== client.user.id) return false;
+  const memberChannel = await getMemberGuildPingsChannel();
+  if (!memberChannel) {
+    console.warn("⚠️ Member guild-pings channel not found; staff alert record preserved.");
+    return false;
+  }
+
+  // Claim the source message ID in Postgres before delivery. This prevents
+  // repeated startup/history sync from duplicating public messages.
+  const claim = await pool.query(
+    `INSERT INTO guild_ping_member_mirrors(source_message_id, member_channel_id)
+     VALUES($1, $2) ON CONFLICT(source_message_id) DO NOTHING
+     RETURNING source_message_id`,
+    [sourceMessage.id, memberChannel.id]
+  );
+  if (!claim.rowCount) return false;
+
+  try {
+    const mirrored = await memberChannel.send({
+      content: sourceMessage.content,
+      allowedMentions: { parse: [], roles: [], users: [], repliedUser: false }
+    });
+    await pool.query(
+      `UPDATE guild_ping_member_mirrors SET mirrored_message_id = $2
+       WHERE source_message_id = $1`,
+      [sourceMessage.id, mirrored.id]
+    );
+    return true;
+  } catch (error) {
+    // Do not retry an ambiguous Discord send, which could double-post.
+    console.error("❌ Could not mirror guild ping record:", error);
+    return false;
+  }
+}
+
 async function sendMasterLog(roleId, label, text, deliveredCount) {
   const channel = await client.channels.fetch(CHANNELS.REMINDERS).catch(() => null);
   if (!channel?.isTextBased()) throw new Error("#guild-ping-log is unavailable");
 
-  // This archival copy must not generate another ping.
-  await channel.send({
+  // Staff log is private; member copy contains the same event data without pings.
+  const staffLog = await channel.send({
     content: formatAlertHistoryMessage(roleId, label, text, deliveredCount),
-    allowedMentions: { parse: [] }
+    allowedMentions: { parse: [], roles: [], users: [], repliedUser: false }
   });
+  await mirrorStaffGuildPingRecord(staffLog).catch(error =>
+    console.error("❌ Member guild-pings mirror:", error)
+  );
+}
+
+// Bring over recent existing event records once, with no mentions.
+// Only copy Vestra-authored role-alert records, never staff-only notes/panels.
+async function backfillRecentGuildPingRecords() {
+  const staffLog = await client.channels.fetch(CHANNELS.REMINDERS).catch(() => null);
+  if (!staffLog?.isTextBased()) return;
+  if (!await getMemberGuildPingsChannel()) return;
+
+  const recent = await staffLog.messages.fetch({ limit: 50 });
+  const records = [...recent.values()]
+    .filter(message =>
+      message.author?.id === client.user.id &&
+      /^<@&\\d+>\\s+\\*\\*/.test(message.content || "")
+    )
+    .reverse();
+
+  let mirrored = 0;
+  for (const message of records) {
+    if (await mirrorStaffGuildPingRecord(message)) mirrored++;
+  }
+  console.log("✅ Recent guild ping records synced to members:", mirrored);
 }
 
 // Convert Vestra's old boxed event-log embeds into the same compact
@@ -5588,6 +5678,7 @@ client.once(Events.ClientReady, async readyClient => {
     ["Staff Chat", setupStaffChatPanel],
     ["Suggestions", setupSuggestionsPanel],
     ["Bot Logs", setupBotLogsPanel],
+    ["Member Guild Pings", setupMemberGuildPingsPanel],
     ["Guild Ping Log", setupGuildPingsPanel],
     ["Live Event Board", setupEventBoard],
     ["Sword x Staff Live Hub", () => setupSxsHub({
@@ -5619,9 +5710,10 @@ client.once(Events.ClientReady, async readyClient => {
     console.error("❌ Could not complete introductions rebuild v4:", error);
   });
 
-  void migrateLegacyAlertHistory().catch(error => {
-    console.error("❌ Could not complete old guild-ping-log conversion:", error);
-  });
+  void migrateLegacyAlertHistory()
+    .catch(error => console.error("❌ Could not complete old guild-ping-log conversion:", error))
+    .then(() => backfillRecentGuildPingRecords())
+    .catch(error => console.error("❌ Could not mirror recent guild ping history:", error));
 
   // Historical thread renaming is intentionally disabled. Staff have
   // manually curated existing titles, and restarts must never replace them.
