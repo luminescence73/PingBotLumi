@@ -1756,7 +1756,7 @@ async function createHelpThread(interaction, type, emoji, details) {
 }
 
 async function migrateLegacyIntroductions() {
-  const completionKey = "introductions_full_rebuild_sol_v1";
+  const completionKey = "introductions_full_rebuild_sol_v2";
   if ((await dbGetState(completionKey))?.completed) return;
 
   const channel = await client.channels.fetch(CHANNELS.INTRODUCTIONS).catch(() => null);
@@ -1847,7 +1847,10 @@ async function migrateLegacyIntroductions() {
       const isGuide =
         /new members enter here/i.test(combined) ||
         /vestra announces completed inductions/i.test(combined) ||
-        /ashen\s*[\/|]\s*(?:introductions|roster)/i.test(combined);
+        (
+          /ashen\s*[\/|]\s*introductions/i.test(combined) &&
+          /welcome new recruits|new members/i.test(combined)
+        );
 
       const hasThreeFields =
         /language/i.test(combined) &&
@@ -5777,7 +5780,7 @@ client.once(Events.ClientReady, async readyClient => {
 
   // Safe one-time migrations of Vestra's older generated messages.
   void migrateLegacyIntroductions().catch(error => {
-    console.error("❌ Could not complete old introduction conversion:", error);
+    console.error("❌ Could not complete introductions rebuild v2:", error);
   });
 
   void migrateLegacyAlertHistory().catch(error => {
