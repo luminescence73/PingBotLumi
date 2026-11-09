@@ -163,7 +163,46 @@ const BOSS_DATA = Object.freeze({
       elementalAegis: "Wind / Water / Fire / Light / Dark: 14.4K each"
     }),
     skillLabels: Object.freeze(["Drag", "Ailment", "DMG", "Summon"]),
+    threats: "Drag, Ailment and Summon skill types are visible; confirm exact effects in-game.",
     note: "Captured from in-game Conquest F136 boss and Monster Stats screenshots."
+  }),
+  137: Object.freeze({
+    name: "Cyclopean Geocrusher",
+    artwork: { filename: "cyclopean-geocrusher-f137.webp", asset: "./assets/conquest/cyclopean-geocrusher-f137.webp.b64" },
+    level: 352, rank: "Master",
+    stats: Object.freeze({
+      hp: "359B", atk: "14.1M", def: "17.2M", spd: "4.6M",
+      resilience: "240", critRate: "60.1%", critDamage: "50%",
+      critResistance: "32.2%", blockRate: "53%", blockEfficiency: "100%",
+      accuracy: "27.2%", damageBoost: "45.5%", damageResistance: "43.8%",
+      healingBoost: "0%", effectHitRate: "120K", effectResistance: "120K",
+      elementalMastery: "150K", elementalResistance: "150K",
+      physicalMastery: "150K", physicalResistance: "150K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 14.5K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 14.5K each"
+    }),
+    skillLabels: Object.freeze(["DMG","Dispel","Counterattack","DMG"]),
+    threats: "Counterattack and Dispel appear in the boss's skill list. Check their effects and triggers before using multi-hit attacks.",
+    note: "Source: supplied game screenshots of F137; floor was locked."
+  }),
+  138: Object.freeze({
+    name: "Bovine Titan",
+    artwork: { filename: "bovine-titan-f138.webp", asset: "./assets/conquest/bovine-titan-f138.webp.b64" },
+    level: 358, rank: "Master",
+    stats: Object.freeze({
+      hp: "372B", atk: "14.5M", def: "17.3M", spd: "5.72M",
+      resilience: "240", critRate: "60.1%", critDamage: "50%",
+      critResistance: "32.2%", blockRate: "53%", blockEfficiency: "100%",
+      accuracy: "27.2%", damageBoost: "45.5%", damageResistance: "43.8%",
+      healingBoost: "0%", effectHitRate: "126K", effectResistance: "126K",
+      elementalMastery: "158K", elementalResistance: "158K",
+      physicalMastery: "158K", physicalResistance: "158K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 14.7K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 14.7K each"
+    }),
+    skillLabels: Object.freeze(["Debuff","DMG","DMG","Movement","Counterattack"]),
+    threats: "Debuff, Movement and Counterattack appear in the boss's skill list. Check their effects, range and triggers before attacking.",
+    note: "Source: supplied game screenshots of F138; floor was locked."
   })
 });
 
