@@ -2534,7 +2534,7 @@ async function ensureLanguageAccess(member, languageKey) {
   return !!channel.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel);
 }
 
-async function sendLocalizedRoleNotification(roleId, englishText, label, { mentionRole = false } = {}) {
+async function sendLocalizedRoleNotification(roleId, englishText, label) {
   const guild = getGuild();
   if (!guild) return 0;
 
@@ -2596,9 +2596,8 @@ async function sendLocalizedRoleNotification(roleId, englishText, label, { menti
       }
     }
 
-    if (mentionRole) {
-      // Send the actual subscriber role mention instead of listing each user.
-      // Restrict Discord's allowed mentions to exactly this tournament role.
+    // Send a single subscriber role mention per language. Never list individual users.
+    // Only the specified reminder/tournament role may trigger a notification.
       const canPingRole = role.mentionable ||
         !!channel.permissionsFor(client.user)?.has(PermissionFlagsBits.MentionEveryone);
       if (!canPingRole) {
@@ -2609,28 +2608,14 @@ async function sendLocalizedRoleNotification(roleId, englishText, label, { menti
         content: `<@&${roleId}>\n${localized}`,
         allowedMentions: {
           parse: [],
-          roles: [roleId]
+          roles: [roleId],
+          users: [],
+          repliedUser: false
         }
       });
 
       delivered += reachable.length;
-    } else {
-      for (const group of chunks(reachable, 40)) {
-        const userIds = group.map(member => member.id);
-        const mentions = userIds.map(id => `<@${id}>`).join(" ");
 
-        await channel.send({
-          content: `${mentions}
-${localized}`,
-          allowedMentions: {
-            parse: [],
-            users: userIds
-          }
-        });
-
-        delivered += userIds.length;
-      }
-    }
   }
 
   console.log(
@@ -2681,8 +2666,7 @@ async function startTournamentEvent(tournamentKey, announcementText, label) {
   await sendLocalizedRoleNotification(
     tournament.role,
     announcementText,
-    label,
-    { mentionRole: true }
+    label
   );
 
   await updateEventBoard();
@@ -2698,8 +2682,7 @@ async function startTournamentVote(tournamentKey, round, pingMembers = true) {
     await sendLocalizedRoleNotification(
       tournament.role,
       `🗳️ ${tournament.name} Round ${round} voting is OPEN! You have ${tournament.voteMinutes} minutes to vote.`,
-      `${tournament.name} — Round ${round} Voting Open`,
-      { mentionRole: true }
+      `${tournament.name} — Round ${round} Voting Open`
     );
   }
 
