@@ -173,132 +173,146 @@ function knownBoss(floor) {
 
 // Display compact decision-useful Intel; every stat is also accessible through
 // the Detailed Stats button, without requiring a staff input or daily update.
-function bossFields(floor) {
-  const boss = knownBoss(floor);
-  if (boss) {
-    const st = boss.stats;
-    return [
-      {
-        name: "🕷️ BOSS IDENTIFICATION",
-        value: "**" + boss.name + "** • Level **" + boss.level +
-          "** • **" + boss.rank + "** rank\n" +
-          "Confirmed directly in-game at F" + floor + "."
-      },
-      {
-        name: "📊 CORE STATS",
-        value: "❤️ **HP:** " + st.hp + "  •  ⚔️ **ATK:** " + st.atk +
-          "\n🛡️ **DEF:** " + st.def + "  •  💨 **SPD:** " + st.spd +
-          "\n**Resilience:** " + st.resilience
-      },
-      {
-        name: "🛡️ DEFENSIVE STRENGTHS",
-        value: "**Block Rate:** " + st.blockRate +
-          " • **Block Efficiency:** " + st.blockEfficiency +
-          "\n**DMG RES:** " + st.damageResistance +
-          " • **Crit RES:** " + st.critResistance +
-          "\nHer high block chance and damage resistance can make attacks less effective."
-      },
-      {
-        name: "⚡ OFFENSIVE STRENGTHS",
-        value: "**Crit Rate:** " + st.critRate +
-          " • **Crit DMG:** " + st.critDamage +
-          "\n**DMG Boost:** " + st.damageBoost +
-          " • **Accuracy:** " + st.accuracy +
-          "\nPrepare for damaging attacks and potential critical hits."
-      },
-      {
-        name: "🌀 VISIBLE SKILL TYPES",
-        value: "**Drag • Ailment • DMG • Summon**\n" +
-          "These are the labels shown under the four skill icons. " +
-          "Check their in-game descriptions for exact ranges, triggers, " +
-          "status effects, and summon behavior."
-      },
-      {
-        name: "🎯 WEAKNESSES / ELEMENTAL INTEL",
-        value: "**No specific elemental weakness confirmed.**\n" +
-          "All five Affinities and Aegis values are **14.4K each** " +
-          "(Wind, Water, Fire, Light, Dark). These equal displayed values " +
-          "don't identify a preferred damage element."
-      },
-      {
-        name: "📋 TACTICAL PRIORITIES",
-        value: "• **Survivability:** Mind the 60.1% Crit Rate and Drag/Ailment skill types.\n" +
-          "• **Damage:** High Block Rate and DMG RES may blunt your attacks.\n" +
-          "• **Summons:** Check when the Summon skill activates; plan for extra targets if it creates adds.\n" +
-          "• **Rank gap:** This Master boss may sharply punish lower-ranked attackers.\n" +
-          "• **Second run:** Compare survival and damage before swapping skills."
-      }
-    ];
-  }
-  return [
-    {
-      name: "🐉 BOSS / IDENTIFICATION",
-      value: "**Name, level and rank not yet verified for F" + floor + ".**"
-    },
-    {
-      name: "📊 LEVEL • RANK",
-      value: "Not yet confirmed for this floor. Check the Guild Conquest floor view in the enemy database."
-    },
-    {
-      name: "⚡ STRENGTHS",
-      value: "Check enemy rank, damage resistance, block rate, critical stats and skill triggers."
-    },
-    {
-      name: "🎯 WEAKNESSES",
-      value: "No specific elemental vulnerability confirmed. Do not assume appearance indicates damage type."
-    },
-    {
-      name: "🛡️ COMBAT INTEL",
-      value: "• Rank scaling strongly affects the damage dealt and received.\n" +
-        "• Inspect boss skill icons for counters and status effects.\n" +
-        "• Coordinate tanks, support, and damage for each attempt."
-    }
-  ];
+// Information panels are intentionally short and single-purpose on mobile.
+// The full screenshot stats are preserved in BOSS_DATA, but shown one page
+// at a time rather than as a dense wall of fields.
+const INTEL_PAGES = [
+  { key: "summary", label: "Quick Stats", emoji: "📊", description: "HP, attack, defense and key risks" },
+  { key: "offense", label: "Offensive Stats", emoji: "⚔️", description: "Critical hits, accuracy and attack effects" },
+  { key: "defense", label: "Defensive Stats", emoji: "🛡️", description: "Block, mitigation and resistances" },
+  { key: "elements", label: "Elements & Weaknesses", emoji: "🎯", description: "Elemental affinities and aegis" },
+  { key: "tactics", label: "Skills & Strategy", emoji: "🌀", description: "Skills, threats and battle priorities" },
+  { key: "upcoming", label: "Upcoming Floors", emoji: "⏭️", description: "The next five Conquest floors" }
+];
+
+function infoViewsMenu() {
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("cintel_info_view")
+      .setPlaceholder("Switch intel page")
+      .setMinValues(1)
+      .setMaxValues(1)
+      .addOptions([
+        ...INTEL_PAGES.map(page => ({
+          label: page.label, value: page.key, emoji: page.emoji,
+          description: page.description
+        })),
+        { label: "Back to More Options", value: "back", emoji: "↩️" }
+      ])
+  );
 }
 
-function statBreakdownEmbed(floor) {
+function intelEmbed(floor, view = "summary") {
   const boss = knownBoss(floor);
-  if (!boss) {
-    return new EmbedBuilder()
-      .setColor(0x4D5366)
-      .setTitle("📊 F" + floor + " — Monster Stats")
-      .setDescription("Exact stats are not verified for this floor. " +
-        "Browse **Guild Conquest** at " + ENEMIES_URL + " for the in-game enemy reference.");
-  }
-  const st = boss.stats;
-  return new EmbedBuilder()
+  const titleName = boss ? boss.name : "Unknown Boss";
+  const embed = new EmbedBuilder()
     .setColor(0x8176CE)
-    .setTitle("🕷️ F" + floor + " • " + boss.name + " — Full Monster Stats")
-    .setDescription("**Master rank • Level 346**\n" +
-      "Source: member-provided in-game Monster Stats screenshots.")
-    .addFields(
-      { name: "⚔️ Main stats", value:
-        "**ATK:** " + st.atk + "\n**DEF:** " + st.def +
-        "\n**HP:** " + st.hp + "\n**SPD:** " + st.spd },
-      { name: "🛡️ Defense / survival", value:
-        "**Resilience:** " + st.resilience +
-        "\n**Crit RES:** " + st.critResistance +
-        "\n**Block Rate:** " + st.blockRate +
-        "\n**Block Efficiency:** " + st.blockEfficiency +
-        "\n**DMG RES:** " + st.damageResistance +
-        "\n**Healing Boost:** " + st.healingBoost },
-      { name: "⚡ Offense / accuracy", value:
-        "**Crit Rate:** " + st.critRate +
-        "\n**Crit DMG:** " + st.critDamage +
-        "\n**Accuracy:** " + st.accuracy +
-        "\n**DMG Boost:** " + st.damageBoost +
-        "\n**Effect Hit Rate:** " + st.effectHitRate },
-      { name: "🧬 Resistances / mastery", value:
-        "**Effect RES:** " + st.effectResistance +
-        "\n**Elemental Mastery:** " + st.elementalMastery +
-        "\n**Elemental RES:** " + st.elementalResistance +
-        "\n**Physical Mastery:** " + st.physicalMastery +
-        "\n**Physical RES:** " + st.physicalResistance },
-      { name: "🌈 Elemental affinities", value: st.elementalAffinities },
-      { name: "🔰 Elemental aegis", value: st.elementalAegis },
-      { name: "🌀 Skill labels", value: boss.skillLabels.join(" • ") +
-        "\nExact effects aren't shown in the supplied screenshots." }
-    ).setFooter({ text: "Screenshot-confirmed F136 record • This does not update live boss HP." });
+    .setFooter({ text: "F" + floor + " • Select another page below • Stats are not live" });
+
+  if (view === "upcoming") {
+    const nextFloors = Array.from({ length: Math.max(0, Math.min(5, MAX_FLOOR - floor)) },
+      (_, i) => floor + i + 1);
+    const identified = nextFloors.filter(f => knownBoss(f));
+    const unknown = nextFloors.filter(f => !knownBoss(f));
+    const lines = identified.map(f => {
+      const item = knownBoss(f);
+      return "**F" + f + "** · " + item.name + " · Lv. " + item.level + " · " + item.rank;
+    });
+    if (unknown.length) {
+      lines.push("**F" + unknown[0] + (unknown.length > 1 ? "–F" + unknown.at(-1) : "") +
+        "** · Boss profiles not yet verified");
+    }
+    return embed
+      .setTitle("⏭️ Upcoming Conquest Floors")
+      .setDescription((lines.join("\n") || "No higher floors within the tracked range.") +
+        "\n\n" + "The floor tracker advances with **Boss Down**. " +
+        "Unknown boss names and stats are never guessed.")
+      .setFooter({ text: "Current guild target: F" + floor + " • No daily reporting needed" });
+  }
+
+  if (!boss) {
+    return embed
+      .setTitle("⚔️ F" + floor + " · " + titleName)
+      .setDescription(
+        "**" + (view === "tactics" ? "Combat strategy" : "Monster stats") + "**\n\n" +
+        "This floor does not yet have a verified boss profile.\n\n" +
+        "🔎 Reference: " + ENEMIES_URL + "\n\n" +
+        "Vestra will keep the floor tracker working without inventing details."
+      );
+  }
+
+  const st = boss.stats;
+  const title = "🕷️ F" + floor + " · " + boss.name;
+  const idLine = "**" + boss.rank + " · Lv. " + boss.level + "**";
+
+  if (view === "offense") {
+    return embed.setTitle("⚔️ Offensive Stats · " + boss.name)
+      .setDescription(idLine + "\n\n" +
+        "**⚔️ Direct damage**\n" +
+        "ATK **" + st.atk + "**  •  SPD **" + st.spd + "**\n" +
+        "Crit Rate **" + st.critRate + "**  •  Crit DMG **" + st.critDamage + "**\n\n" +
+        "**🎯 Accuracy & amplification**\n" +
+        "DMG Boost **" + st.damageBoost + "**  •  Accuracy **" + st.accuracy + "**\n" +
+        "Effect Hit **" + st.effectHitRate + "**\n" +
+        "Elemental / Physical Mastery **" + st.elementalMastery + " / " + st.physicalMastery + "**");
+  }
+
+  if (view === "defense") {
+    return embed.setTitle("🛡️ Defensive Stats · " + boss.name)
+      .setDescription(idLine + "\n\n" +
+        "**🛡️ Damage mitigation**\n" +
+        "Block Rate **" + st.blockRate + "**  •  Efficiency **" + st.blockEfficiency + "**\n" +
+        "DMG RES **" + st.damageResistance + "**  •  Crit RES **" + st.critResistance + "**\n\n" +
+        "**🔰 Other defenses**\n" +
+        "DEF **" + st.def + "**  •  Resilience **" + st.resilience + "**\n" +
+        "Effect RES **" + st.effectResistance + "**\n" +
+        "Elemental / Physical RES **" + st.elementalResistance + " / " + st.physicalResistance + "**\n" +
+        "Healing Boost **" + st.healingBoost + "**");
+  }
+
+  if (view === "elements") {
+    return embed.setTitle("🎯 Elements & Weaknesses · " + boss.name)
+      .setDescription(idLine + "\n\n" +
+        "**🌈 Elemental Affinity**\n" +
+        "Wind · Water · Fire · Light · Dark\n" +
+        "**14.4K each**\n\n" +
+        "**🔰 Elemental Aegis**\n" +
+        "Wind · Water · Fire · Light · Dark\n" +
+        "**14.4K each**\n\n" +
+        "**No confirmed elemental weakness.** The displayed elemental values are equal.");
+  }
+
+  if (view === "tactics") {
+    return embed.setTitle("🌀 Skills & Strategy · " + boss.name)
+      .setDescription(idLine + "\n\n" +
+        "**Observed skill labels**\n" +
+        "**Drag · Ailment · DMG · Summon**\n" +
+        "Exact triggers and effects have not been confirmed.\n\n" +
+        "**⚠️ Biggest threats**\n" +
+        "• Crit Rate **" + st.critRate + "** — prioritize survivability.\n" +
+        "• Block **" + st.blockRate + "** and DMG RES **" + st.damageResistance + "** — damage may be reduced.\n\n" +
+        "**✅ Before your next run**\n" +
+        "Check skill descriptions, protect support units, and plan for possible summons.");
+  }
+
+  return embed.setTitle("📊 Quick Stats · " + boss.name)
+    .setDescription(idLine + "\n\n" +
+      "**❤️ Core stats**\n" +
+      "HP **" + st.hp + "**  •  ATK **" + st.atk + "**\n" +
+      "DEF **" + st.def + "**  •  SPD **" + st.spd + "**\n\n" +
+      "**⚠️ Key numbers**\n" +
+      "Crit **" + st.critRate + "**  •  Block **" + st.blockRate + "**\n" +
+      "DMG RES **" + st.damageResistance + "**\n\n" +
+      "Choose **Offense**, **Defense**, **Elements**, or **Skills** for more.");
+}
+
+function intelViewPayload(floor, view) {
+  return {
+    content: "",
+    embeds: [intelEmbed(floor, view)],
+    components: [infoViewsMenu()],
+    allowedMentions: { parse: [] }
+  };
 }
 
 function progressBar(floor) {
@@ -349,21 +363,7 @@ function mainEmbed(progress, source, includeArtwork = false) {
 }
 
 function nextEmbed(floor, source) {
-  return new EmbedBuilder()
-    .setColor(0x4D5366)
-    .setTitle("📖 UPCOMING CONQUEST | F" + (floor + 1) + "–F" + (floor + 5))
-    .setDescription(
-      Array.from({ length: 5 }, (_, index) => {
-        const f = floor + index + 1;
-        const boss = knownBoss(f);
-        return "**Floor " + f + "** — " + (boss
-          ? boss.name + " • Lv. " + boss.level + " • " + boss.rank
-          : "boss/level not verified");
-      }).join("\n") + "\n\n" +
-      "🔎 **Boss names, exact levels, skills and resistances:** " + ENEMIES_URL +
-      "\n\n**Automated source check:** " + sourceLabel(source) + "\n" +
-      "*The floor numbers advance with your guild's Boss Down confirmations.*"
-    );
+  return intelEmbed(floor, "upcoming");
 }
 function rows() {
   // Two visible buttons total. Other actions move into one private menu.
@@ -599,31 +599,9 @@ export async function handleConquestIntelInteraction(interaction, { client, pool
     const selection = interaction.values[0];
     const current = await getProgress();
     const floor = Number(current.floor);
-    if (selection === "stats") {
-      await interaction.update({
-        content: "📊 **Detailed Monster Stats • F" + floor + "**",
-        embeds: [statBreakdownEmbed(floor)],
-        components: []
-      });
-      return true;
-    }
-    if (selection === "tactics") {
-      await interaction.update({
-        content: "🛡️ **Skills & Strategy • F" + floor + "**",
-        embeds: [new EmbedBuilder()
-          .setColor(0x8176CE)
-          .setTitle("⚔️ Conquest Boss Intel • F" + floor)
-          .addFields(...bossFields(floor))],
-        components: []
-      });
-      return true;
-    }
-    if (selection === "upcoming") {
-      await interaction.update({
-        content: "⏭️ **Upcoming Conquest Bosses**",
-        embeds: [nextEmbed(floor, await readState(SOURCE_KEY))],
-        components: []
-      });
+    if (selection === "stats" || selection === "tactics" || selection === "upcoming") {
+      const view = selection === "stats" ? "summary" : selection;
+      await interaction.update(intelViewPayload(floor, view));
       return true;
     }
     if (selection === "lookup") {
@@ -662,6 +640,26 @@ export async function handleConquestIntelInteraction(interaction, { client, pool
     await interaction.update({ content: "This option is unavailable.", components: [] });
     return true;
   }
+  if (interaction.isStringSelectMenu() && id === "cintel_info_view") {
+    const selected = interaction.values[0];
+    if (selected === "back") {
+      const staff = await staffAccess(interaction, isStaff);
+      await interaction.update({
+        content: "📖 **Conquest Intel** — choose an option:",
+        embeds: [],
+        components: [optionsMenu(staff)],
+        allowedMentions: { parse: [] }
+      });
+      return true;
+    }
+    if (!INTEL_PAGES.some(page => page.key === selected)) {
+      await interaction.update({ content: "Unknown intel view.", embeds: [], components: [] });
+      return true;
+    }
+    const progress = await getProgress();
+    await interaction.update(intelViewPayload(Number(progress.floor), selected));
+    return true;
+  }
   if (!interaction.isButton() && !interaction.isModalSubmit()) return false;
   const privateReply = text => interaction.reply({
     content: text, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] }
@@ -680,7 +678,7 @@ export async function handleConquestIntelInteraction(interaction, { client, pool
     if (id === "cintel_stats") {
       const current = await getProgress();
       await interaction.reply({
-        embeds: [statBreakdownEmbed(Number(current.floor))],
+        ...intelViewPayload(Number(current.floor), "summary"),
         flags: MessageFlags.Ephemeral,
         allowedMentions: { parse: [] }
       });
@@ -696,7 +694,7 @@ export async function handleConquestIntelInteraction(interaction, { client, pool
       const floor = Number(current.floor);
       const source = await readState(SOURCE_KEY);
       await interaction.reply({
-        embeds: [nextEmbed(floor, source)],
+        ...intelViewPayload(floor, "upcoming"),
         flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] }
       });
       return true;
