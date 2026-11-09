@@ -18,6 +18,7 @@ import {
 import pg from "pg";
 import { createHash } from "node:crypto";
 import { setupSxsHub } from "./sxsHub.js";
+import { setupConquestIntel, handleConquestIntelInteraction } from "./conquestIntel.js";
 
 const { Pool } = pg;
 
@@ -3029,9 +3030,35 @@ function eventApplies(event, y, m, d, weekday) {
 // LOCALIZED NOTIFICATION DELIVERY
 // =====================================================
 
+const GUILD_PING_DIVIDER = "━━━━━━━━━━━━━━━━━━━━";
+
+function isGuildPingAlertRecord(content) {
+  const value = String(content || "");
+  const header = /^<@&\\d+>\\s+\\*\\*/.test(value);
+  const spaced = value.startsWith(GUILD_PING_DIVIDER + "\n");
+  const hasDelivery = value.includes("🌎 Vestra delivered ") ||
+    value.includes("🌎 Localized delivery count was not recorded.");
+  return (header || spaced) && hasDelivery;
+}
+
+function formatGuildPingSpacing(content) {
+  const raw = String(content || "");
+  if (!isGuildPingAlertRecord(raw) || raw.startsWith(GUILD_PING_DIVIDER + "\n")) return null;
+  const lines = raw.split("\n");
+  const heading = lines.shift() || "";
+  const details = lines.join("\n").trim();
+  return [
+    GUILD_PING_DIVIDER,
+    "",
+    "🔔 " + heading,
+    "",
+    details
+  ].join("\n");
+}
+
 function formatAlertHistoryMessage(roleId, label, text, deliveredCount) {
   const displayedRole = roleId ? `<@&${roleId}>` : "";
-  return [
+  const original = [
     [displayedRole, `**${label}**`].filter(Boolean).join(" "),
     text || "Event notification sent.",
     "",
@@ -3039,6 +3066,12 @@ function formatAlertHistoryMessage(roleId, label, text, deliveredCount) {
       ? `🌎 Vestra delivered ${deliveredCount} localized notifications.`
       : "🌎 Localized delivery count was not recorded."
   ].join("\n");
+  return formatGuildPingSpacing(original) ||
+    [GUILD_PING_DIVIDER, "", "🔔 **" + label + "**", displayedRole, "",
+      text || "Event notification sent.", "",
+      Number.isInteger(deliveredCount)
+        ? `🌎 Vestra delivered ${deliveredCount} localized notifications.`
+        : "🌎 Localized delivery count was not recorded."].join("\n");
 }
 
 async function mirrorStaffGuildPingRecord(sourceMessage) {
@@ -3102,7 +3135,7 @@ async function backfillRecentGuildPingRecords() {
   const records = [...recent.values()]
     .filter(message =>
       message.author?.id === client.user.id &&
-      /^<@&\d+>\s+\*\*/.test(message.content || "")
+      isGuildPingAlertRecord(message.content)
     )
     .reverse();
 
@@ -3111,6 +3144,52 @@ async function backfillRecentGuildPingRecords() {
     if (await mirrorStaffGuildPingRecord(message)) mirrored++;
   }
   console.log("✅ Recent guild ping records synced to members:", mirrored);
+}
+
+// Format recent existing staff and member alert records without reposting
+// or changing timestamps. One-time only; never touch member/staff-authored posts.
+async function spaceExistingGuildPingRecords() {
+  const key = "guild_ping_spacing_2026_11_09_v1";
+  if ((await dbGetState(key))?.completed) return;
+  const channels = [
+    await client.channels.fetch(CHANNELS.REMINDERS).catch(() => null),
+    await getMemberGuildPingsChannel()
+  ].filter(Boolean);
+
+  let scanned = 0, edited = 0, errors = 0;
+  for (const channel of channels) {
+    let before = null;
+    for (let pageNo = 0; pageNo < 5; pageNo++) {
+      const batch = await channel.messages.fetch({
+        limit: 100,
+        ...(before ? { before } : {})
+      });
+      if (!batch.size) break;
+
+      for (const message of batch.values()) {
+        scanned++;
+        if (message.author?.id !== client.user.id) continue;
+        const next = formatGuildPingSpacing(message.content);
+        if (!next) continue;
+        try {
+          await message.edit({
+            content: next,
+            allowedMentions: { parse: [], roles: [], users: [] }
+          });
+          edited++;
+        } catch (error) {
+          errors++;
+          console.error("❌ Could not separate guild ping record " + message.id + ":", error.message);
+        }
+      }
+      before = batch.last()?.id;
+      if (batch.size < 100 || !before) break;
+    }
+  }
+  if (!errors) {
+    await dbSetState(key, { completed: true, edited, scanned });
+  }
+  console.log("✅ Guild pings visually separated:", edited, "updated,", scanned, "checked,", errors, "errors");
 }
 
 // Convert Vestra's old boxed event-log embeds into the same compact
@@ -4795,6 +4874,8 @@ client.on(Events.MessageReactionRemove, (reaction, user) => {
 
 client.on(Events.InteractionCreate, async interaction => {
   try {
+    if (await handleConquestIntelInteraction(interaction, { client, pool, isStaff })) return;
+
     // Old persistent buttons can survive prior deployments. Do not rename.
     if (interaction.isButton() && interaction.customId === "admin_apply_theme") {
       return interaction.reply({
@@ -5681,6 +5762,7 @@ client.once(Events.ClientReady, async readyClient => {
     ["Member Guild Pings", setupMemberGuildPingsPanel],
     ["Guild Ping Log", setupGuildPingsPanel],
     ["Live Event Board", setupEventBoard],
+    ["Conquest Intel", () => setupConquestIntel({ client, pool, guild: ashenGuild })],
     ["Sword x Staff Live Hub", () => setupSxsHub({
       client,
       remindersChannelId: CHANNELS.REMINDERS,
@@ -5713,7 +5795,8 @@ client.once(Events.ClientReady, async readyClient => {
   void migrateLegacyAlertHistory()
     .catch(error => console.error("❌ Could not complete old guild-ping-log conversion:", error))
     .then(() => backfillRecentGuildPingRecords())
-    .catch(error => console.error("❌ Could not mirror recent guild ping history:", error));
+    .then(() => spaceExistingGuildPingRecords())
+    .catch(error => console.error("❌ Could not sync and space recent guild ping records:", error));
 
   // Historical thread renaming is intentionally disabled. Staff have
   // manually curated existing titles, and restarts must never replace them.
