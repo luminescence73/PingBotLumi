@@ -136,37 +136,40 @@ function bossFields(floor) {
     {
       name: "🐉 BOSS / IDENTIFICATION",
       value: known
-        ? "Purple armored, horned creature pictured on Nov 9. **Official name not verified.**"
+        ? "Nov 9 screenshot: **purple armored, horned creature** with large claws and a pale mask-like face. **Official name not yet identified.**"
         : "**Identity not verified for this floor.**"
     },
     {
       name: "📊 LEVEL • RANK",
       value: "**Level:** Not verified\n**Rank:** Not verified\n" +
-        "Enemy level/rank must be checked in the source's **Guild Conquest** floor view."
+        "The game's **Guild Conquest** database provides floor-specific levels/ranks, but Vestra hasn't confirmed a safe way to import the individual records."
     },
     {
       name: "⚡ STRENGTHS",
-      value: "Boss-specific abilities and resistance values **not verified**. " +
-        "Check attack type, range, skill triggers and any reactive counters in the enemy database."
+      value: "Exact F" + floor + " resistances and skills **not verified**. " +
+        "**Important:** Conquest bosses can have counter passives. Inspect each **skill icon**; " +
+        "players report that counter details may explain elemental strength/weakness and why multi-hit builds take heavy retaliation."
     },
     {
       name: "🎯 WEAKNESSES",
-      value: "Elemental vulnerabilities and damage-type resistances **not verified**. " +
-        "Do not assume purple coloring indicates an element."
+      value: "Exact elemental vulnerability **not verified**. " +
+        "Do not assume purple coloring means Dark damage or Dark resistance. " +
+        "Test the boss's actual skill and resistance information before changing elements."
     },
     {
       name: "🛡️ COMBAT INTEL",
-      value: "• **Rank gap:** Higher-ranked enemies can drastically reduce damage dealt and increase damage taken.\n" +
-        "• **Counters:** Inspect skill icons; reactive counter skills can punish repeated hits.\n" +
-        "• **Formation:** Keep room for frontline allies, healers and ranged attackers.\n" +
-        "• **Run two:** Adjust defenses and positioning based on what happened on the first attempt."
+      value: "• **Verified rank scaling:** Champion vs Expert: **×15.3 damage dealt**, ÷15.3 received. " +
+        "Champion vs Master: **÷81 damage dealt**, ×81 received. These are examples, not F" + floor + " boss stats.\n" +
+        "• **Skill inspection:** Tap boss skill icons to check counter effects; players report they reveal otherwise hidden combat clues.\n" +
+        "• **Team:** Keep a frontline tank and support/healing; don't crowd the boss with only melee attackers.\n" +
+        "• **Next attempt:** Compare surviving turns, attack frequency and elemental attacks before changing damage builds."
     }
   ];
 }
 function fightStatus(floor) {
   if (floor === FIRST_KNOWN_FLOOR) {
-    return "**LAST SCREENSHOT:** 52% HP at F136 on November 9. " +
-      "This is a historical snapshot, **not the boss's current HP**.";
+    return "**NOV 9 SCREENSHOT:** F136 • **52% HP** • **Daily Challenge Attempts 2/2** • " +
+      "a paw-icon reward shown. These are historical on-screen values, **not live boss HP or attempts**.";
   }
   return "**HP:** Not connected to the game; inspect the current boss in Sword X Staff.";
 }
