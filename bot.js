@@ -2565,7 +2565,7 @@ async function getScopedPingRoles(guild, subscriptionRole, activeLanguages) {
     if (!helperRole && activeLanguages.has(key)) {
       const info = LANGUAGE_CHANNELS[key];
       helperRole = await guild.roles.create({
-        name: `Vestra | ${subscriptionRole.name.slice(0, 48)} | ${info.code.toUpperCase()} | ${subscriptionRole.id.slice(-4)}`,
+        name: `${subscriptionRole.name.slice(0, 70)} · ${info.name}`,
         hoist: false,
         mentionable: false,
         reason: "Notify subscribers once in their primary language"
