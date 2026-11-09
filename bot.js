@@ -3490,7 +3490,7 @@ async function organizeAshenSidebar(guildOverride = null) {
   const definitions = [
     { name: "✧ ASHEN | WELCOME", existing: ["ASHEN | ENTRY", "ASHEN | WELCOME"], channels: [
       "start-here", "announcements", "server-guide", "introductions",
-      "entry", "code", "induction", "roster", "vestra-settings", "ashen-showcase"
+      "entry", "code", "induction"
     ] },
     { name: "◇ ASHEN | COMMONS", existing: ["ASHEN | COMMONS"], channels: [
       "general", "media", "memes", "movies-and-shows", "movies-shows",
@@ -3506,7 +3506,7 @@ async function organizeAshenSidebar(guildOverride = null) {
       "gift-codes", "builds-and-guides", "sxs-database", "updates-and-news"
     ] },
     { name: "◇ ASHEN | COMMUNITY", existing: ["ASHEN | COMMUNITY"], channels: [
-      "highlights", "community-highlights", "suggestions", "help-and-requests", "support", "command-requests"
+      "highlights", "community-highlights", "ashen-showcase", "suggestions", "help-and-requests", "support", "command-requests", "roster", "vestra-settings"
     ] },
     { name: "⚔ ASHEN | COMMAND", existing: ["ASHEN | COMMAND", "ASHEN INFO"], channels: [
       "staff-chat", "staff-requests", "guild-members", "guild-ping-log", "bot-logs",
