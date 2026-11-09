@@ -417,24 +417,22 @@ async function fetchLiveData() {
   };
 }
 
-function linkButton(label, url) {
-  return new ButtonBuilder()
-    .setStyle(ButtonStyle.Link)
-    .setLabel(label)
-    .setURL(url);
-}
+function plainBoard(title, sections, sourceUrl, stale = false) {
+  const body = [
+    `**${title}**`,
+    "",
+    ...sections.filter(Boolean),
+    "",
+    stale ? "_Showing the last confirmed SxS information._" : "_Updated automatically by Vestra when the information changes._",
+    sourceUrl ? `Source: <${sourceUrl}>` : null
+  ].filter(Boolean).join("\n");
 
-function buttonRow(...buttons) {
-  return new ActionRowBuilder().addComponents(...buttons);
-}
-
-function timestampEmbed(embed, fetchedAt, stale = false) {
-  embed
-    .setColor(BRAND_COLOR)
-    .setFooter({ text: stale ? "Vestra | Last confirmed SxS data" : "Vestra | Live SxS data" });
-
-  if (fetchedAt) embed.setTimestamp(new Date(fetchedAt));
-  return embed;
+  return {
+    content: truncate(body, 1990),
+    embeds: [],
+    components: [],
+    allowedMentions: { parse: [] }
+  };
 }
 
 function buildPayloads(data, stale = false) {
@@ -451,64 +449,67 @@ function buildPayloads(data, stale = false) {
   const currentSummary = data.seasonIndex.current;
   const nextSeason = data.seasonIndex.next;
 
-  const seasonal = timestampEmbed(new EmbedBuilder()
-    .setTitle(`SWORD X STAFF | SEASON ${seasonNumber}`)
-    .setDescription([
+  const seasonal = plainBoard(
+    `SWORD X STAFF | SEASON ${seasonNumber}`,
+    [
       `**Region:** ${region}`,
       tier ? `**Class Tier:** T${tier}` : null,
       serverDay ? `**Server Day:** ${serverDay}` : null,
       currentSummary?.dateRange ? `**Season Dates:** ${currentSummary.dateRange}` : null,
-      data.season.classes ? `\n**Current Classes**\n${truncate(data.season.classes, 1200)}` : null
-    ].filter(Boolean).join("\n"))
-    .addFields(
-      {
-        name: "Next Milestone",
-        value: nextMilestone ? truncate(formatMilestone(nextMilestone), 1024) : "No later milestone is currently listed for this season."
-      },
-      {
-        name: "Most Recent Unlock",
-        value: recentMilestone ? truncate(formatMilestone(recentMilestone), 1024) : "Season progression is being tracked."
-      },
-      {
-        name: "Next Season",
-        value: nextSeason
-          ? `**Season ${nextSeason.number} — ${nextSeason.region}**\nT${nextSeason.tier} • ${nextSeason.dateRange}`
-          : "No upcoming season is currently listed."
-      }
-    ), data.fetchedAt, stale);
+      data.season.classes ? `\n**Current Classes**\n${truncate(data.season.classes, 650)}` : null,
+      `\n**Next Milestone**\n${nextMilestone ? formatMilestone(nextMilestone) : "No later milestone is currently listed for this season."}`,
+      `\n**Most Recent Unlock**\n${recentMilestone ? formatMilestone(recentMilestone) : "Season progression is being tracked."}`,
+      `\n**Next Season**\n${nextSeason ? `Season ${nextSeason.number} — ${nextSeason.region}\nT${nextSeason.tier} • ${nextSeason.dateRange}` : "No upcoming season is currently listed."}`
+    ],
+    data.seasonUrl,
+    stale
+  );
 
-  const weekly = timestampEmbed(new EmbedBuilder()
-    .setTitle("SWORD X STAFF | WEEKLY ROTATION")
-    .setDescription("Vestra checks the live SxS rotation automatically and updates this board when the cycle changes.")
-    .addFields(
-      { name: "Grand Treasure Hunt", value: truncate(data.home.weekly.hunt || "No current hunt detected.", 1024) },
-      { name: "Level 5 Reward", value: truncate(data.home.weekly.reward || "Reward information unavailable.", 1024) },
-      { name: "Mini-game", value: truncate(data.home.weekly.miniGame || "Mini-game information unavailable.", 1024) },
-      { name: "Next Rotation", value: truncate(data.home.weekly.next || "Next rotation has not been published yet.", 1024) },
-      { name: "Reset", value: truncate(data.roadmapWeek.reset || "Check the live roadmap for the exact reset time.", 1024) }
-    ), data.fetchedAt, stale);
+  const weekly = plainBoard(
+    "SWORD X STAFF | WEEKLY ROTATION",
+    [
+      `**Grand Treasure Hunt**\n${data.home.weekly.hunt || "No current hunt detected."}`,
+      `\n**Level 5 Reward**\n${data.home.weekly.reward || "Reward information unavailable."}`,
+      `\n**Mini-game**\n${data.home.weekly.miniGame || "Mini-game information unavailable."}`,
+      `\n**Next Rotation**\n${data.home.weekly.next || "Next rotation has not been published yet."}`,
+      `\n**Reset**\n${data.roadmapWeek.reset || "Check the live roadmap for the exact reset time."}`
+    ],
+    SOURCE.home,
+    stale
+  );
 
   const roadmapLines = (upcoming.length ? upcoming : milestones.slice(-6))
     .slice(0, 6)
     .map(formatMilestone);
 
-  const roadmap = timestampEmbed(new EmbedBuilder()
-    .setTitle(`SWORD X STAFF | SEASON ${seasonNumber} ROADMAP`)
-    .setDescription(roadmapLines.length
-      ? truncate(roadmapLines.join("\n\n"), 4000)
-      : "No roadmap milestones were available from the live source."), data.fetchedAt, stale);
+  const roadmap = plainBoard(
+    `SWORD X STAFF | SEASON ${seasonNumber} ROADMAP`,
+    [
+      roadmapLines.length
+        ? roadmapLines.join("\n\n")
+        : "No roadmap milestones were available from the live source."
+    ],
+    SOURCE.roadmap,
+    stale
+  );
 
-  const codeLines = data.codes.map(item => `**${item.code}** — ${item.reward}`);
-  const codeChunks = splitDiscordText(codeLines, 3500);
-  const codes = timestampEmbed(new EmbedBuilder()
-    .setTitle("SWORD X STAFF | GIFT CODES")
-    .setDescription(codeChunks[0] || "No active/permanent gift codes were detected.")
-    .addFields(codeChunks[1] ? [{ name: "More Codes", value: codeChunks[1] }] : []), data.fetchedAt, stale)
-    .setFooter({ text: "Vestra | Redeem: Main Menu > User Center > Gift Code" });
+  const codeLines = data.codes
+    .slice(0, 20)
+    .map(item => `**${item.code}** — ${item.reward}`);
 
-  const database = timestampEmbed(new EmbedBuilder()
-    .setTitle("SWORD X STAFF | DATABASE")
-    .setDescription([
+  const codes = plainBoard(
+    "SWORD X STAFF | GIFT CODES",
+    [
+      codeLines.length ? codeLines.join("\n") : "No active/permanent gift codes were detected.",
+      "\nRedeem: Main Menu > User Center > Gift Code"
+    ],
+    SOURCE.codes,
+    stale
+  );
+
+  const database = plainBoard(
+    "SWORD X STAFF | DATABASE",
+    [
       `Reference data for **Season ${seasonNumber}** and the rest of Sword x Staff.`,
       "",
       "**Skills & Charms** — rarity scaling, effects, and keywords",
@@ -518,91 +519,68 @@ function buildPayloads(data, stale = false) {
       "**Recipes & Food** — ingredients and effects",
       "**Dungeon Gear** — sets and 2-piece / 4-piece bonuses",
       "**Monsters, Skins & Item Values** — additional reference data"
-    ].join("\n")), data.fetchedAt, stale);
+    ],
+    SOURCE.database,
+    stale
+  );
 
-  const builds = timestampEmbed(new EmbedBuilder()
-    .setTitle("SWORD X STAFF | BUILDS & GUIDES")
-    .setDescription([
-      `Current progression: **Season ${seasonNumber} • ${region}${tier ? ` • T${tier}` : ""}**`,
-      data.season.classes ? `\n**Current class paths**\n${truncate(data.season.classes, 1500)}` : "",
-      "\nUse the class-build library for loadouts and the guide library for progression, systems, and preparation. The season header updates automatically."
-    ].filter(Boolean).join("\n")), data.fetchedAt, stale);
+  const builds = plainBoard(
+    "SWORD X STAFF | BUILDS & GUIDES",
+    [
+      `**Current Progression:** Season ${seasonNumber} • ${region}${tier ? ` • T${tier}` : ""}`,
+      data.season.classes ? `\n**Current Class Paths**\n${truncate(data.season.classes, 900)}` : null,
+      "\nClass builds: <https://www.valkyrie.tips/builds/curated>",
+      "Guides: <https://www.valkyrie.tips/guides>"
+    ],
+    SOURCE.builds,
+    stale
+  );
 
   const newsLines = data.home.news.map(item => {
     const url = externalUrl(item.href);
-    return url ? `• [${truncate(item.label, 170)}](${url})` : `• ${truncate(item.label, 180)}`;
+    return url ? `• ${truncate(item.label, 160)}\n  <${url}>` : `• ${truncate(item.label, 180)}`;
   });
 
-  const news = timestampEmbed(new EmbedBuilder()
-    .setTitle("SWORD X STAFF | UPDATES & NEWS")
-    .setDescription(newsLines.length
-      ? newsLines.join("\n")
-      : "No recent official-news links were detected. Open the live SxS feed below for the latest posts."), data.fetchedAt, stale);
+  const news = plainBoard(
+    "SWORD X STAFF | UPDATES & NEWS",
+    [
+      newsLines.length
+        ? newsLines.join("\n\n")
+        : "No recent official-news links were detected. Open the live SxS feed for the latest posts."
+    ],
+    SOURCE.home,
+    stale
+  );
 
-  return {
-    seasonal: {
-      embeds: [seasonal],
-      components: [buttonRow(linkButton("Season Page", data.seasonUrl), linkButton("All Seasons", SOURCE.seasons))]
-    },
-    weekly: {
-      embeds: [weekly],
-      components: [buttonRow(linkButton("Live Weekly Source", SOURCE.home), linkButton("Full Roadmap", SOURCE.roadmap))]
-    },
-    roadmap: {
-      embeds: [roadmap],
-      components: [buttonRow(linkButton("Full Roadmap", SOURCE.roadmap), linkButton("Season Page", data.seasonUrl))]
-    },
-    codes: {
-      embeds: [codes],
-      components: [buttonRow(linkButton("Live Codes", SOURCE.codes))]
-    },
-    database: {
-      embeds: [database],
-      components: [buttonRow(linkButton("Open Database", SOURCE.database))]
-    },
-    builds: {
-      embeds: [builds],
-      components: [buttonRow(linkButton("Class Builds", SOURCE.builds), linkButton("Guides", SOURCE.guides))]
-    },
-    news: {
-      embeds: [news],
-      components: [buttonRow(linkButton("Latest SxS Feed", SOURCE.home))]
-    }
-  };
+  return { seasonal, weekly, roadmap, codes, database, builds, news };
 }
 
 function buildUnavailablePayload(def) {
-  const embed = new EmbedBuilder()
-    .setColor(BRAND_COLOR)
-    .setTitle(`SWORD X STAFF | ${def.name.replaceAll("-", " ").toUpperCase()}`)
-    .setDescription("Vestra could not reach the live SxS source during first-time setup. This board will populate automatically on the next successful refresh.")
-    .setFooter({ text: "Vestra | Automatic retry enabled" });
-
-  return {
-    embeds: [embed],
-    components: [buttonRow(linkButton("SxS Source", SOURCE.home))]
-  };
+  return plainBoard(
+    `SWORD X STAFF | ${def.name.replaceAll("-", " ").toUpperCase()}`,
+    [
+      "Vestra could not reach the live SxS source during first-time setup.",
+      "This message will update automatically on the next successful refresh."
+    ],
+    SOURCE.home,
+    true
+  );
 }
 
 function payloadHash(payload) {
-  const serializable = {
-    embeds: (payload.embeds || []).map(embed => embed.toJSON()),
-    components: (payload.components || []).map(component => component.toJSON())
-  };
-
   return createHash("sha256")
-    .update(JSON.stringify(serializable))
+    .update(payload.content || "")
     .digest("hex");
 }
 
 async function findBoardMessage(channel, botUserId) {
   const pins = await channel.messages.fetchPins().catch(() => null);
   const pinnedItems = pins?.items ?? pins;
-  const pinned = pinnedItems?.find?.(message => message.author.id === botUserId && message.embeds?.length);
+  const pinned = pinnedItems?.find?.(message => message.author.id === botUserId);
   if (pinned) return pinned;
 
   const recent = await channel.messages.fetch({ limit: 25 }).catch(() => null);
-  return recent?.find(message => message.author.id === botUserId && message.embeds?.length) || null;
+  return recent?.find(message => message.author.id === botUserId) || null;
 }
 
 async function ensureReadOnlyPermissions(channel, guild, client, staffRoles) {
