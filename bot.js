@@ -3488,26 +3488,29 @@ async function organizeAshenSidebar(guildOverride = null) {
   await guild.channels.fetch();
 
   const definitions = [
-    { name: "✦ ASHEN | ENTRY", existing: ["ASHEN | ENTRY"], channels: [
-      "entry", "code", "induction", "support", "command-requests",
-      "roster", "vestra-settings", "ashen-showcase"
+    { name: "✧ ASHEN | WELCOME", existing: ["ASHEN | ENTRY", "ASHEN | WELCOME"], channels: [
+      "start-here", "announcements", "server-guide", "introductions",
+      "entry", "code", "induction", "roster", "vestra-settings", "ashen-showcase"
     ] },
-    { name: "✧ ASHEN | COMMAND", existing: ["ASHEN | COMMAND", "ASHEN INFO"], channels: [
-      "ashen-announcements", "sxs-announcements", "alert-history",
-      "highlights", "war-board"
+    { name: "◇ ASHEN | COMMONS", existing: ["ASHEN | COMMONS"], channels: [
+      "general", "media", "memes", "movies-and-shows", "movies-shows",
+      "other-games", "food", "music", "rando-topics", "random-topics", "travel"
     ] },
     { name: "✦ SWORD X STAFF | GUILD", existing: ["SWORD X STAFF | OPERATIONS", "SWORD X STAFF | GUILD"], channels: [
-      "sxs-event-board", "general-en", "general-es", "general-fr",
-      "general-de", "general-pt", "general-ja", "sxs-media", "sxs-resources"
+      "sxs-event-board", "war-board", "guild-pings", "sxs-media",
+      "general-en", "general-es", "general-fr", "general-de",
+      "general-pt", "general-ja", "sxs-resources"
     ] },
-    { name: "✧ SWORD X STAFF | INTEL", existing: [], channels: [
-      "seasonal-info", "weekly-rotation", "updates-and-news",
-      "sxs-roadmap", "gift-codes", "ingredient-maps",
-      "builds-and-guides", "sxs-database"
+    { name: "✧ SWORD X STAFF | INTEL", existing: ["SWORD X STAFF | INTEL"], channels: [
+      "seasonal-info", "sxs-roadmap", "weekly-rotation", "ingredient-maps",
+      "gift-codes", "builds-and-guides", "sxs-database", "updates-and-news"
     ] },
-    { name: "◇ ASHEN | COMMONS", existing: [], channels: [
-      "general", "media", "memes", "movies-shows", "other-games",
-      "food", "music", "random-topics", "travel"
+    { name: "◇ ASHEN | COMMUNITY", existing: ["ASHEN | COMMUNITY"], channels: [
+      "highlights", "community-highlights", "suggestions", "help-and-requests", "support", "command-requests"
+    ] },
+    { name: "⚔ ASHEN | COMMAND", existing: ["ASHEN | COMMAND", "ASHEN INFO"], channels: [
+      "staff-chat", "staff-requests", "guild-members", "guild-ping-log", "bot-logs",
+      "ashen-announcements", "sxs-announcements", "alert-history"
     ] },
     { name: "⌁ ASHEN | VOICE", existing: ["ASHEN | VOICE"], channels: [] }
   ];
@@ -3541,8 +3544,8 @@ async function organizeAshenSidebar(guildOverride = null) {
     }
   }
 
-  const entry = categoryFor.get("✦ ASHEN | ENTRY");
-  const command = categoryFor.get("✧ ASHEN | COMMAND");
+  const entry = categoryFor.get("✧ ASHEN | WELCOME");
+  const command = categoryFor.get("⚔ ASHEN | COMMAND");
   const guildCategory = categoryFor.get("✦ SWORD X STAFF | GUILD");
   const intel = categoryFor.get("✧ SWORD X STAFF | INTEL");
   const commons = categoryFor.get("◇ ASHEN | COMMONS");
