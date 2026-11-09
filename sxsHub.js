@@ -665,7 +665,7 @@ async function ensureChannels(client, remindersChannelId, staffRoles) {
 
   const category = guild.channels.cache.find(channel =>
     channel.type === ChannelType.GuildCategory &&
-    normalizeDiscordName(channel.name).includes(normalizeDiscordName(SXS_CATEGORY_MATCH))
+    normalizeDiscordName(channel.name).includes(normalizeDiscordName("SWORD X STAFF | INTEL"))
   );
 
   if (!category) {
