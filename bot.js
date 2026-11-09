@@ -1801,18 +1801,18 @@ async function memberCardEmbed(member) {
 
   return new EmbedBuilder()
     .setColor(BRAND_COLOR)
-    .setTitle(`ASHEN | ${member.displayName}`)
-    .setDescription(`${LANGUAGE_CHANNELS[primary].name} · ${playstyle} · ${social}`)
+    .setTitle(`✦ ASHEN | ${member.displayName}`)
+    .setDescription(`✧ ${LANGUAGE_CHANNELS[primary].name} · ${playstyle} · ${social}`)
     .setThumbnail(member.user.displayAvatarURL({ size: 256 }))
     .addFields(
-      { name: "Notification language", value: LANGUAGE_CHANNELS[primary].name },
-      { name: "Language access", value: languageAccess.join(", ") || "None" },
-      { name: "Playstyle", value: playstyle, inline: true },
-      { name: "Social", value: social, inline: true },
-      { name: "Guild alerts", value: reminders.join(", ") || "None" },
-      { name: "Tournament alerts", value: tournaments.join(", ") || "None" }
+      { name: "🌐 Notification language", value: LANGUAGE_CHANNELS[primary].name },
+      { name: "✧ Language access", value: languageAccess.join(", ") || "None" },
+      { name: "⚔ Playstyle", value: playstyle, inline: true },
+      { name: "💬 Social", value: social, inline: true },
+      { name: "🔔 Guild alerts", value: reminders.join(", ") || "None" },
+      { name: "🏆 Tournament alerts", value: tournaments.join(", ") || "None" }
     )
-    .setFooter({ text: "Vestra | Ashen Profile" });
+    .setFooter({ text: "✦ Vestra | Ashen Profile" });
 }
 
 // =====================================================
@@ -1837,13 +1837,13 @@ function settingsHomeComponents() {
 
 function settingsHomeEmbed() {
   return brandEmbed(
-    "VESTRA | SETTINGS",
+    "✦ VESTRA | SETTINGS",
     "Manage your access, alerts, and member profile."
   ).addFields(
-    { name: "Language", value: "Channel access and notification language", inline: true },
-    { name: "Alerts", value: "Guild and tournament subscriptions", inline: true },
-    { name: "Profile", value: "Playstyle and social preference", inline: true }
-  ).setFooter({ text: "Vestra | Changes save immediately" });
+    { name: "🌐 Language", value: "Channel access and notification language", inline: true },
+    { name: "🔔 Alerts", value: "Guild and tournament subscriptions", inline: true },
+    { name: "✧ Profile", value: "Playstyle and social preference", inline: true }
+  ).setFooter({ text: "✦ Vestra | Changes save immediately" });
 }
 
 function backButtonRow() {
@@ -2643,12 +2643,12 @@ async function sendMasterLog(roleId, label, text, deliveredCount) {
 // Convert Vestra's old boxed event-log embeds into the same compact
 // text format without deleting/reposting messages or changing timestamps.
 async function migrateLegacyAlertHistory() {
-  const completionKey = "alert_history_plaintext_migration_v1";
+  const completionKey = "alert_history_plaintext_migration_v2";
   if ((await dbGetState(completionKey))?.completed) return;
 
   const channel = await client.channels.fetch(CHANNELS.REMINDERS).catch(() => null);
   if (!channel?.isTextBased() || !channel.messages?.fetch) {
-    console.warn("⚠️ Alert history cleanup postponed: channel unavailable.");
+    console.warn("⚠️ Guild ping log cleanup postponed: channel unavailable.");
     return;
   }
 
@@ -2676,19 +2676,25 @@ async function migrateLegacyAlertHistory() {
       const embed = message.embeds?.find(e => {
         const fieldNames = (e.fields || []).map(f => f.name || "");
         return (
-          e.title?.startsWith("🔔 ") &&
-          fieldNames.some(name => name.includes("Localized Delivery")) &&
-          fieldNames.some(name => name.includes("Subscriber Role"))
+          e.title?.startsWith("🔔 ") ||
+          fieldNames.some(name => /localized delivery/i.test(name)) ||
+          fieldNames.some(name => /subscriber role/i.test(name))
         );
       });
       if (!embed) continue;
 
-      const roleField = embed.fields.find(field => field.name.includes("Subscriber Role"));
-      const deliveryField = embed.fields.find(field => field.name.includes("Localized Delivery"));
-      const roleId = roleField?.value?.match(/<@&(\d+)>/)?.[1] || null;
-      const reportedCount = deliveryField?.value?.match(/(\d+)\s+members?\s+notified/i);
+      const roleField = (embed.fields || []).find(field => /subscriber role/i.test(field.name || ""));
+      const deliveryField = (embed.fields || []).find(field => /localized delivery/i.test(field.name || ""));
+      const roleId =
+        roleField?.value?.match(/<@&(\d+)>/)?.[1] ||
+        embed.description?.match(/<@&(\d+)>/)?.[1] ||
+        null;
+      const reportedCount =
+        deliveryField?.value?.match(/(\d+)\s+members?\s+notified/i) ||
+        embed.description?.match(/(\d+)\s+members?\s+notified/i);
       const count = reportedCount ? Number(reportedCount[1]) : null;
-      const label = embed.title.slice("🔔 ".length).trim();
+      const rawTitle = (embed.title || "Guild Alert").replace(/^🔔\s*/, "").trim();
+      const label = rawTitle || "Guild Alert";
       const content = formatAlertHistoryMessage(
         roleId,
         label,
@@ -2705,7 +2711,7 @@ async function migrateLegacyAlertHistory() {
         converted++;
       } catch (error) {
         failed++;
-        console.error(`❌ Could not convert alert-history message ${message.id}:`, error.message);
+        console.error(`❌ Could not convert guild-ping-log message ${message.id}:`, error.message);
       }
     }
 
@@ -2719,7 +2725,7 @@ async function migrateLegacyAlertHistory() {
   if (failed === 0) {
     await dbSetState(completionKey, { completed: true, inspected, converted });
   }
-  console.log(`✅ Alert history cleanup: ${converted} converted, ${failed} failed, ${inspected} scanned.`);
+  console.log(`✅ Guild ping log cleanup: ${converted} converted, ${failed} failed, ${inspected} scanned.`);
 }
 
 async function ensureLanguageAccess(member, languageKey) {
