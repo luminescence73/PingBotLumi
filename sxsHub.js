@@ -441,4 +441,154 @@ function buildPayloads(data, stale = false) {
   const seasonNumber = data.home.season.number;
   const region = data.season.region || data.home.season.region || "Current region";
   const serverDay = data.home.season.serverDay;
-  cons
+  const tier = data.season.tier || data.seasonIndex.current?.tier;
+  const milestones = data.season.milestones || [];
+  const now = Date.now();
+  const upcoming = milestones.filter(item => new Date(item.date).getTime() >= now - 12 * 3600_000);
+  const past = milestones.filter(item => new Date(item.date).getTime() < now - 12 * 3600_000);
+  const nextMilestone = upcoming[0] || null;
+  const recentMilestone = past[past.length - 1] || null;
+  const currentSummary = data.seasonIndex.current;
+  const nextSeason = data.seasonIndex.next;
+
+  const seasonal = timestampEmbed(new EmbedBuilder()
+    .setTitle(`SWORD X STAFF | SEASON ${seasonNumber}`)
+    .setDescription([
+      `**Region:** ${region}`,
+      tier ? `**Class Tier:** T${tier}` : null,
+      serverDay ? `**Server Day:** ${serverDay}` : null,
+      currentSummary?.dateRange ? `**Season Dates:** ${currentSummary.dateRange}` : null,
+      data.season.classes ? `\n**Current Classes**\n${truncate(data.season.classes, 1200)}` : null
+    ].filter(Boolean).join("\n"))
+    .addFields(
+      {
+        name: "Next Milestone",
+        value: nextMilestone ? truncate(formatMilestone(nextMilestone), 1024) : "No later milestone is currently listed for this season."
+      },
+      {
+        name: "Most Recent Unlock",
+        value: recentMilestone ? truncate(formatMilestone(recentMilestone), 1024) : "Season progression is being tracked."
+      },
+      {
+        name: "Next Season",
+        value: nextSeason
+          ? `**Season ${nextSeason.number} — ${nextSeason.region}**\nT${nextSeason.tier} • ${nextSeason.dateRange}`
+          : "No upcoming season is currently listed."
+      }
+    ), data.fetchedAt, stale);
+
+  const weekly = timestampEmbed(new EmbedBuilder()
+    .setTitle("SWORD X STAFF | WEEKLY ROTATION")
+    .setDescription("Vestra checks the live SxS rotation automatically and updates this board when the cycle changes.")
+    .addFields(
+      { name: "Grand Treasure Hunt", value: truncate(data.home.weekly.hunt || "No current hunt detected.", 1024) },
+      { name: "Level 5 Reward", value: truncate(data.home.weekly.reward || "Reward information unavailable.", 1024) },
+      { name: "Mini-game", value: truncate(data.home.weekly.miniGame || "Mini-game information unavailable.", 1024) },
+      { name: "Next Rotation", value: truncate(data.home.weekly.next || "Next rotation has not been published yet.", 1024) },
+      { name: "Reset", value: truncate(data.roadmapWeek.reset || "Check the live roadmap for the exact reset time.", 1024) }
+    ), data.fetchedAt, stale);
+
+  const roadmapLines = (upcoming.length ? upcoming : milestones.slice(-6))
+    .slice(0, 6)
+    .map(formatMilestone);
+
+  const roadmap = timestampEmbed(new EmbedBuilder()
+    .setTitle(`SWORD X STAFF | SEASON ${seasonNumber} ROADMAP`)
+    .setDescription(roadmapLines.length
+      ? truncate(roadmapLines.join("\n\n"), 4000)
+      : "No roadmap milestones were available from the live source."), data.fetchedAt, stale);
+
+  const codeLines = data.codes.map(item => `**${item.code}** — ${item.reward}`);
+  const codeChunks = splitDiscordText(codeLines, 3500);
+  const codes = timestampEmbed(new EmbedBuilder()
+    .setTitle("SWORD X STAFF | GIFT CODES")
+    .setDescription(codeChunks[0] || "No active/permanent gift codes were detected.")
+    .addFields(codeChunks[1] ? [{ name: "More Codes", value: codeChunks[1] }] : []), data.fetchedAt, stale)
+    .setFooter({ text: "Vestra | Redeem: Main Menu > User Center > Gift Code" });
+
+  const database = timestampEmbed(new EmbedBuilder()
+    .setTitle("SWORD X STAFF | DATABASE")
+    .setDescription([
+      `Reference data for **Season ${seasonNumber}** and the rest of Sword x Staff.`,
+      "",
+      "**Skills & Charms** — rarity scaling, effects, and keywords",
+      "**Relics** — season, region, element, and rarity filters",
+      "**Fantomons & Companions** — abilities, skills, and progression",
+      "**Equipment & Gems** — stat affixes and value ranges",
+      "**Recipes & Food** — ingredients and effects",
+      "**Dungeon Gear** — sets and 2-piece / 4-piece bonuses",
+      "**Monsters, Skins & Item Values** — additional reference data"
+    ].join("\n")), data.fetchedAt, stale);
+
+  const builds = timestampEmbed(new EmbedBuilder()
+    .setTitle("SWORD X STAFF | BUILDS & GUIDES")
+    .setDescription([
+      `Current progression: **Season ${seasonNumber} • ${region}${tier ? ` • T${tier}` : ""}**`,
+      data.season.classes ? `\n**Current class paths**\n${truncate(data.season.classes, 1500)}` : "",
+      "\nUse the class-build library for loadouts and the guide library for progression, systems, and preparation. The season header updates automatically."
+    ].filter(Boolean).join("\n")), data.fetchedAt, stale);
+
+  const newsLines = data.home.news.map(item => {
+    const url = externalUrl(item.href);
+    return url ? `• [${truncate(item.label, 170)}](${url})` : `• ${truncate(item.label, 180)}`;
+  });
+
+  const news = timestampEmbed(new EmbedBuilder()
+    .setTitle("SWORD X STAFF | UPDATES & NEWS")
+    .setDescription(newsLines.length
+      ? newsLines.join("\n")
+      : "No recent official-news links were detected. Open the live SxS feed below for the latest posts."), data.fetchedAt, stale);
+
+  return {
+    seasonal: {
+      embeds: [seasonal],
+      components: [buttonRow(linkButton("Season Page", data.seasonUrl), linkButton("All Seasons", SOURCE.seasons))]
+    },
+    weekly: {
+      embeds: [weekly],
+      components: [buttonRow(linkButton("Live Weekly Source", SOURCE.home), linkButton("Full Roadmap", SOURCE.roadmap))]
+    },
+    roadmap: {
+      embeds: [roadmap],
+      components: [buttonRow(linkButton("Full Roadmap", SOURCE.roadmap), linkButton("Season Page", data.seasonUrl))]
+    },
+    codes: {
+      embeds: [codes],
+      components: [buttonRow(linkButton("Live Codes", SOURCE.codes))]
+    },
+    database: {
+      embeds: [database],
+      components: [buttonRow(linkButton("Open Database", SOURCE.database))]
+    },
+    builds: {
+      embeds: [builds],
+      components: [buttonRow(linkButton("Class Builds", SOURCE.builds), linkButton("Guides", SOURCE.guides))]
+    },
+    news: {
+      embeds: [news],
+      components: [buttonRow(linkButton("Latest SxS Feed", SOURCE.home))]
+    }
+  };
+}
+
+function buildUnavailablePayload(def) {
+  const embed = new EmbedBuilder()
+    .setColor(BRAND_COLOR)
+    .setTitle(`SWORD X STAFF | ${def.name.replaceAll("-", " ").toUpperCase()}`)
+    .setDescription("Vestra could not reach the live SxS source during first-time setup. This board will populate automatically on the next successful refresh.")
+    .setFooter({ text: "Vestra | Automatic retry enabled" });
+
+  return {
+    embeds: [embed],
+    components: [buttonRow(linkButton("SxS Source", SOURCE.home))]
+  };
+}
+
+function payloadHash(payload) {
+  const serializable = {
+    embeds: (payload.embeds || []).map(embed => embed.toJSON()),
+    components: (payload.components || []).map(component => component.toJSON())
+  };
+
+  return createHash("sha256")
+    .update
