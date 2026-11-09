@@ -1,374 +1,517 @@
 import {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  ChannelType,
-  EmbedBuilder,
-  MessageFlags,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType,
+  EmbedBuilder, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle
 } from "discord.js";
 
-// The channel now takes NO daily or staff-entered information.
-// Purrwikimania publishes the live, interactive Guild Conquest enemy table,
-// and Vestra checks the source automatically. The website does not expose
-// a verified machine-readable floor endpoint, so never invent floor stats.
+// ASHEN CONQUEST INTEL — existing channel and hand-curated names preserved.
+// The guild floor is a bot-tracked counter (not a game API reading).
+// Only staff-confirmed boss defeats advance it. No daily scouting forms.
 const ENEMIES_URL = "https://www.purrwikimania.com/enemies";
 const COMBAT_URL = "https://www.purrwikimania.com/combat";
-const RANK_URL = "https://www.purrwikimania.com/combat/ranks";
 const CHANNEL_KEY = "ashen_conquest_intel_channel_v1";
 const PANEL_KEY = "ashen_conquest_intel_panel_v1";
 const SOURCE_KEY = "ashen_conquest_intel_source_check_v2";
-const REFERENCE_FLOOR = 136; // user screenshot on Nov 9, NOT live guild progress
-const UPDATE_PERIOD_MS = 6 * 60 * 60 * 1000;
+const FIRST_KNOWN_FLOOR = 136; // Nov 9 screenshot, not a live game connection
+const REFRESH_MS = 6 * 60 * 60 * 1000;
+const MAX_FLOOR = 5000;
+
 let context = null;
-let timer = null;
-let busy = false;
+let ticker = null;
+let checkInProgress = false;
+let pendingRenders = Promise.resolve();
 
-const key = value => String(value || "").normalize("NFKC")
-  .toLowerCase().replace(/[^a-z0-9]+/g, "");
+const normalize = value => String(value || "")
+  .normalize("NFKC").toLowerCase().replace(/[^a-z0-9]+/g, "");
+const short = (value, max = 500) => String(value || "").slice(0, max);
 
-async function readState(stateKey) {
-  const result = await context.pool.query(
-    "SELECT value FROM bot_state WHERE key = $1", [stateKey]
-  );
-  return result.rows[0]?.value || null;
+async function readState(key) {
+  const rows = await context.pool.query("SELECT value FROM bot_state WHERE key = $1", [key]);
+  return rows.rows[0]?.value || null;
 }
-
-async function saveState(stateKey, value) {
+async function writeState(key, value) {
   await context.pool.query(
     "INSERT INTO bot_state(key,value,updated_at) VALUES($1,$2::jsonb,NOW()) " +
-    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
-    [stateKey, JSON.stringify(value)]
+    "ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+    [key, JSON.stringify(value)]
   );
 }
-
-function findIntelCategory(guild) {
-  return guild.channels.cache.find(channel =>
-    channel.type === ChannelType.GuildCategory &&
-    key(channel.name).includes("swordxstaffintel")
-  ) || null;
+function guild() {
+  return context?.guild || context?.client?.guilds?.cache?.first() || null;
 }
-
-async function getIntelChannel({ create = false } = {}) {
-  const guild = context.guild || context.client.guilds.cache.first();
-  if (!guild) return null;
-  await guild.channels.fetch();
-
-  const existingState = await readState(CHANNEL_KEY);
-  if (existingState?.channelId) {
-    const linked = guild.channels.cache.get(existingState.channelId);
-    if (linked?.type === ChannelType.GuildText) return linked;
-    console.warn("⚠️ Conquest Intel: previously saved channel missing; no replacement will be created.");
+async function setupTables() {
+  await context.pool.query(
+    "CREATE TABLE IF NOT EXISTS conquest_intel_progress (" +
+    "guild_id TEXT PRIMARY KEY, floor INTEGER NOT NULL CHECK (floor BETWEEN 1 AND 5000), " +
+    "last_from INTEGER, last_to INTEGER, last_action TEXT, updated_by TEXT, " +
+    "updated_at TIMESTAMPTZ DEFAULT NOW())"
+  );
+  await context.pool.query(
+    "CREATE TABLE IF NOT EXISTS conquest_intel_clear_history (" +
+    "guild_id TEXT NOT NULL, floor INTEGER NOT NULL, cleared_by TEXT, " +
+    "cleared_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (guild_id, floor))"
+  );
+  await context.pool.query(
+    "INSERT INTO conquest_intel_progress (guild_id, floor) VALUES ($1, $2) " +
+    "ON CONFLICT (guild_id) DO NOTHING",
+    [guild().id, FIRST_KNOWN_FLOOR]
+  );
+}
+async function getProgress() {
+  const result = await context.pool.query(
+    "SELECT floor, last_from, last_to, last_action, updated_by, updated_at " +
+    "FROM conquest_intel_progress WHERE guild_id = $1",
+    [guild().id]
+  );
+  return result.rows[0] || { floor: FIRST_KNOWN_FLOOR };
+}
+async function getChannel() {
+  const server = guild();
+  if (!server) return null;
+  const previous = await readState(CHANNEL_KEY);
+  if (previous?.channelId) {
+    const channel = await server.channels.fetch(previous.channelId).catch(() => null);
+    if (channel?.type === ChannelType.GuildText) return channel;
+    // Respect staff-curated names, IDs, and previous manual cleanup.
+    console.warn("⚠️ Conquest Intel: saved channel ID unavailable. No replacement will be created.");
     return null;
   }
-
-  const category = findIntelCategory(guild);
-  if (!category) {
-    console.warn("⚠️ Conquest Intel: existing SxS Intel category unavailable.");
-    return null;
-  }
-  const existing = guild.channels.cache.find(channel =>
+  await server.channels.fetch();
+  const intel = server.channels.cache.find(channel =>
+    channel.type === ChannelType.GuildCategory &&
+    normalize(channel.name).includes("swordxstaffintel")
+  );
+  if (!intel) return null;
+  const existing = server.channels.cache.find(channel =>
     channel.type === ChannelType.GuildText &&
-    channel.parentId === category.id &&
-    key(channel.name) === "conquestintel"
+    channel.parentId === intel.id &&
+    normalize(channel.name) === "conquestintel"
   );
   if (existing) {
-    await saveState(CHANNEL_KEY, { channelId: existing.id, created: true });
-    return existing;
+    await writeState(CHANNEL_KEY, { channelId: existing.id, created: true });
   }
-
-  // Only the already-authorized original channel creation. This is not
-  // a repeating channel creator and does not change staff-curated names.
-  if (!create || existingState?.created) return null;
-  const channel = await guild.channels.create({
-    name: "conquest-intel",
-    type: ChannelType.GuildText,
-    parent: category.id,
-    topic: "Automatically refreshed Guild Conquest enemy references and strategy. No manual updates.",
-    reason: "Ashen requested an automatically maintained Conquest Intel reference channel"
-  });
-  await saveState(CHANNEL_KEY, { channelId: channel.id, created: true });
-  await channel.lockPermissions().catch(error =>
-    console.warn("⚠️ Conquest Intel access sync failed:", error.message)
-  );
-  return channel;
+  // Older setup already created the channel. Never create or rename more.
+  return existing || null;
 }
-
-async function checkReferenceSource() {
+async function checkSource() {
   const previous = (await readState(SOURCE_KEY)) || {};
   const result = { ...previous, checkedAt: new Date().toISOString(), healthy: false };
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
-    let response;
-    try {
-      response = await fetch(ENEMIES_URL, {
-        method: "GET",
-        signal: controller.signal,
-        headers: {
-          "Accept": "text/html",
-          "User-Agent": "Ashen-Vestra-Conquest-Intel/1.0"
-        }
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-
+    const response = await fetch(ENEMIES_URL, {
+      signal: AbortSignal.timeout(12000),
+      headers: { Accept: "text/html", "User-Agent": "Vestra-Conquest-Intel/2.0" }
+    });
+    result.statusCode = response.status;
     if (response.ok) {
       const html = await response.text();
-      // Check that this is truly the game enemy page, not an error page.
-      if (/Guild Conquest/i.test(html) && /enemies/i.test(html)) {
+      if (/Guild Conquest/i.test(html) && /Enemies/i.test(html)) {
         result.healthy = true;
         result.lastHealthyAt = result.checkedAt;
       }
     }
-    result.statusCode = response.status;
   } catch (error) {
     result.statusCode = null;
-    console.warn("⚠️ Conquest Intel source was not reachable:", error.message);
+    console.warn("⚠️ Conquest source status:", error.message);
   }
-  await saveState(SOURCE_KEY, result);
+  await writeState(SOURCE_KEY, result);
   return result;
 }
-
-function discordTimestamp(iso) {
-  const epoch = Date.parse(iso || "");
-  return Number.isFinite(epoch) ? "<t:" + Math.floor(epoch / 1000) + ":R>" : "not yet verified";
+function checkedAt(source) {
+  const stamp = Date.parse(source?.checkedAt || "");
+  return Number.isFinite(stamp)
+    ? "<t:" + Math.floor(stamp / 1000) + ":R>"
+    : "not checked yet";
+}
+function sourceLabel(source) {
+  if (source?.healthy) return "Online · checked " + checkedAt(source);
+  if (source?.lastHealthyAt) return "Latest check failed · last verified previously";
+  return "Availability unconfirmed";
 }
 
-function panelText(sourceStatus) {
-  const sourceHealth = sourceStatus?.healthy
-    ? "✅ Reference website available • checked " + discordTimestamp(sourceStatus.checkedAt)
-    : sourceStatus?.lastHealthyAt
-      ? "⚠️ Latest check failed • last reachable " + discordTimestamp(sourceStatus.lastHealthyAt)
-      : "⚠️ Reference connection not yet verified — existing links still work for members";
-
+// Visual intel. Only the screenshot's historical details are established.
+// Actual floor-specific enemy levels, elements, skills, and resistances need
+// a verified game-data endpoint; we never interpolate or invent those.
+function bossFields(floor) {
+  const known = floor === FIRST_KNOWN_FLOOR;
   return [
-    "# ASHEN / CONQUEST INTEL",
-    "**AUTOMATIC SOURCE GUIDE · NO STAFF MAINTENANCE REQUIRED**",
-    "",
-    "## ⚔️ Conquest Boss Database",
-    "Browse **Guild Conquest** in the full game-data enemy reference:",
-    ENEMIES_URL,
-    "",
-    "It provides the game's enemy listings, skills and rank-based statistics for Conquest floors. ",
-    "The reference is maintained externally; Vestra checks whether it remains available every 6 hours.",
-    "**Reference status:** " + sourceHealth,
-    "",
-    "## 📍 Floor 136 and Upcoming Floors",
-    "Your **November 9 screenshot** showed Floor **136**, a purple armored creature and **52% HP** at that moment.",
-    "That is a snapshot, **not a live reading**. Your guild may be farther ahead now.",
-    "To check **F136, F137, F138 and later floors**, open the database, select **Guild Conquest**, and choose the floor number.",
-    "Vestra doesn't have a connection to Sword X Staff's private guild progress, so it won't guess your current floor.",
-    "",
-    "## 🛡️ What matters when fighting these bosses",
-    "• **Rank difference:** The damage multiplier depends strongly on the difference between your rank and the enemy's rank.",
-    "• **Boss skills:** Check the database for each boss's actual attacks and counter skills before adjusting your build.",
-    "• **Large boss positioning:** Don't stack every melee character in limited adjacent squares; maintain room for tanks and ranged damage.",
-    "• **Counterattack risk:** If a boss has a reactive counter skill, high-frequency attackers may need stronger defensive mitigation.",
-    "• **Second run:** Use what you learned in the first battle to adjust positioning and survival; no manual data entry is required.",
-    "",
-    "**Useful combat formulas:** " + COMBAT_URL,
-    "",
-    "*Exact boss identities and numbers aren't copied into this panel until a verified machine-readable source exists. The linked database is the authoritative interactive floor lookup.*"
-  ].join("\n");
+    {
+      name: "🐉 BOSS / IDENTIFICATION",
+      value: known
+        ? "Purple armored, horned creature pictured on Nov 9. **Official name not verified.**"
+        : "**Identity not verified for this floor.**"
+    },
+    {
+      name: "📊 LEVEL • RANK",
+      value: "**Level:** Not verified\n**Rank:** Not verified\n" +
+        "Enemy level/rank must be checked in the source's **Guild Conquest** floor view."
+    },
+    {
+      name: "⚡ STRENGTHS",
+      value: "Boss-specific abilities and resistance values **not verified**. " +
+        "Check attack type, range, skill triggers and any reactive counters in the enemy database."
+    },
+    {
+      name: "🎯 WEAKNESSES",
+      value: "Elemental vulnerabilities and damage-type resistances **not verified**. " +
+        "Do not assume purple coloring indicates an element."
+    },
+    {
+      name: "🛡️ COMBAT INTEL",
+      value: "• **Rank gap:** Higher-ranked enemies can drastically reduce damage dealt and increase damage taken.\n" +
+        "• **Counters:** Inspect skill icons; reactive counter skills can punish repeated hits.\n" +
+        "• **Formation:** Keep room for frontline allies, healers and ranged attackers.\n" +
+        "• **Run two:** Adjust defenses and positioning based on what happened on the first attempt."
+    }
+  ];
 }
-
-function controls() {
+function fightStatus(floor) {
+  if (floor === FIRST_KNOWN_FLOOR) {
+    return "**LAST SCREENSHOT:** 52% HP at F136 on November 9. " +
+      "This is a historical snapshot, **not the boss's current HP**.";
+  }
+  return "**HP:** Not connected to the game; inspect the current boss in Sword X Staff.";
+}
+function progressBar(floor) {
+  // Floor progression indicator; NOT a boss-HP bar.
+  const prev = Math.max(1, floor - 1);
+  const next = Math.min(MAX_FLOOR, floor + 1);
+  return "✅ F" + prev + "   ━━━━━   ⚔️ **F" + floor + "**   ━━━━━   ⏭️ F" + next;
+}
+function mainEmbed(progress, source) {
+  const floor = Number(progress.floor);
+  return new EmbedBuilder()
+    .setColor(0x8176CE)
+    .setTitle("⚔️ ASHEN WARRIORS | CONQUEST INTEL")
+    .setDescription(
+      "### CURRENT TARGET — FLOOR " + floor + "\n\n" +
+      progressBar(floor) + "\n\n" +
+      fightStatus(floor) + "\n\n" +
+      "Use **Boss Down** after your guild defeats this floor. " +
+      "Vestra then advances the target automatically and updates this card."
+    )
+    .addFields(...bossFields(floor))
+    .setFooter({
+      text: "Source: Purrwikimania • " +
+        (source?.healthy ? "website reachable" : "website not confirmed") +
+        " • Game data is not connected"
+    })
+    .setTimestamp(progress.updated_at ? new Date(progress.updated_at) : new Date());
+}
+function nextEmbed(floor, source) {
+  return new EmbedBuilder()
+    .setColor(0x4D5366)
+    .setTitle("📖 UPCOMING CONQUEST | F" + (floor + 1) + "–F" + (floor + 5))
+    .setDescription(
+      Array.from({ length: 5 }, (_, index) =>
+        "**Floor " + (floor + index + 1) + "** — boss/level not verified"
+      ).join("\n") + "\n\n" +
+      "🔎 **Boss names, exact levels, skills and resistances:** " + ENEMIES_URL +
+      "\n\n**Automated source check:** " + sourceLabel(source) + "\n" +
+      "*The floor numbers advance with your guild's Boss Down confirmations.*"
+    );
+}
+function rows() {
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setLabel("Browse Conquest Bosses")
-        .setStyle(ButtonStyle.Link)
-        .setEmoji("⚔️")
-        .setURL(ENEMIES_URL),
-      new ButtonBuilder()
-        .setLabel("Combat Formulas")
-        .setStyle(ButtonStyle.Link)
-        .setEmoji("📊")
-        .setURL(COMBAT_URL),
-      new ButtonBuilder()
-        .setLabel("Floor Lookup")
-        .setStyle(ButtonStyle.Secondary)
-        .setCustomId("cintel_lookup")
-        .setEmoji("🔎")
+      new ButtonBuilder().setCustomId("cintel_down").setLabel("Boss Down").setEmoji("☠️").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("cintel_undo").setLabel("Undo Last Clear").setEmoji("↩️").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("cintel_current").setLabel("Current Boss").setEmoji("⚔️").setStyle(ButtonStyle.Primary)
     ),
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setLabel("Floor 136 Guide")
-        .setStyle(ButtonStyle.Secondary)
-        .setCustomId("cintel_reference"),
-      new ButtonBuilder()
-        .setLabel("Future Bosses")
-        .setStyle(ButtonStyle.Secondary)
-        .setCustomId("cintel_upcoming")
+      new ButtonBuilder().setCustomId("cintel_next").setLabel("Next Boss").setEmoji("⏭️").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("cintel_lookup").setLabel("Find Floor").setEmoji("🔎").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("cintel_set_floor").setLabel("Correct Floor").setEmoji("🧭").setStyle(ButtonStyle.Secondary)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(ENEMIES_URL).setLabel("Enemy Database").setEmoji("📚"),
+      new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(COMBAT_URL).setLabel("Combat Mechanics").setEmoji("🛡️")
     )
   ];
 }
-
-async function updatePanel(sourceStatus) {
-  const channel = await getIntelChannel();
-  if (!channel) return;
-  const saved = await readState(PANEL_KEY);
-  let message = saved?.channelId === channel.id && saved?.messageId
-    ? await channel.messages.fetch(saved.messageId).catch(() => null)
-    : null;
-
-  if (!message) {
-    const recent = await channel.messages.fetch({ limit: 60 }).catch(() => null);
-    message = recent?.find(m => m.author?.id === context.client.user.id &&
-      m.content?.startsWith("# ASHEN / CONQUEST INTEL")) || null;
-  }
-
-  const payload = {
-    content: panelText(sourceStatus),
-    components: controls(),
-    embeds: [],
+function payload(progress, source) {
+  return {
+    content: "# ASHEN / CONQUEST INTEL\n**Live guild floor tracker • Staff-confirmed progression**",
+    embeds: [mainEmbed(progress, source), nextEmbed(Number(progress.floor), source)],
+    components: rows(),
     allowedMentions: { parse: [] }
   };
-  if (message) await message.edit(payload);
-  else message = await channel.send(payload);
-
-  await saveState(PANEL_KEY, { channelId: channel.id, messageId: message.id });
-  if (!message.pinned) await message.pin().catch(() => {});
 }
+async function editPanel() {
+  const channel = await getChannel();
+  if (!channel) return null;
+  const progress = await getProgress();
+  const source = await readState(SOURCE_KEY);
+  const previous = await readState(PANEL_KEY);
+  let message = previous?.channelId === channel.id && previous?.messageId
+    ? await channel.messages.fetch(previous.messageId).catch(() => null)
+    : null;
+  if (!message) {
+    const recent = await channel.messages.fetch({ limit: 60 }).catch(() => null);
+    message = recent?.find(item => item.author?.id === context.client.user.id &&
+      (item.content?.startsWith("# ASHEN / CONQUEST INTEL") ||
+       item.embeds?.[0]?.title?.includes("CONQUEST INTEL"))) || null;
+  }
 
+  if (message) {
+    await message.edit(payload(progress, source));
+  } else {
+    message = await channel.send(payload(progress, source));
+  }
+  await writeState(PANEL_KEY, { channelId: channel.id, messageId: message.id });
+  if (!message.pinned) await message.pin().catch(() => {});
+  return message;
+}
+function updatePanel() {
+  // Serial editing prevents older requests from overwriting newer floor cards.
+  pendingRenders = pendingRenders.catch(() => {}).then(() => editPanel());
+  return pendingRenders;
+}
 async function refreshSourceAndPanel() {
-  if (busy) return;
-  busy = true;
+  if (checkInProgress) return;
+  checkInProgress = true;
   try {
-    const status = await checkReferenceSource();
-    await updatePanel(status);
-    console.log("✅ Conquest Intel source checked and panel refreshed.");
+    await checkSource();
+    await updatePanel();
   } catch (error) {
     console.error("❌ Conquest Intel refresh:", error);
   } finally {
-    busy = false;
+    checkInProgress = false;
   }
 }
-
-export async function setupConquestIntel({ client, pool, guild }) {
-  context = { client, pool, guild };
-  const channel = await getIntelChannel({ create: true });
-  if (!channel) return null;
-
+export async function setupConquestIntel({ client, pool, guild: server }) {
+  context = { client, pool, guild: server };
+  const channel = await getChannel();
+  if (!channel) {
+    console.warn("⚠️ Existing Conquest Intel channel not found; preserving all channel names.");
+    return null;
+  }
+  await setupTables();
   await refreshSourceAndPanel();
-  if (timer) clearInterval(timer);
-  timer = setInterval(() => {
-    void refreshSourceAndPanel();
-  }, UPDATE_PERIOD_MS);
+  if (ticker) clearInterval(ticker);
+  ticker = setInterval(() => { void refreshSourceAndPanel(); }, REFRESH_MS);
   return channel;
 }
-
-function floorNumber(raw) {
-  if (!/^[0-9]{1,4}$/.test(String(raw || "").trim())) return null;
-  const n = Number(raw);
-  return n >= 1 && n <= 5000 ? n : null;
+function parseFloor(value) {
+  const raw = String(value || "").trim();
+  if (!/^\d{1,4}$/.test(raw)) return null;
+  const floor = Number(raw);
+  return floor >= 1 && floor <= MAX_FLOOR ? floor : null;
 }
-
-function floorSummary(floor) {
-  const screenshot = floor === REFERENCE_FLOOR
-    ? "\n\n**Known screenshot (November 9):** purple armored boss, 52% HP at capture. This is not live status."
-    : "";
-  return new EmbedBuilder()
-    .setTitle("⚔️ Guild Conquest F" + floor)
-    .setColor(0x363B41)
-    .setDescription(
-      "Open **" + ENEMIES_URL + "**, select **Guild Conquest**, then enter **Floor " +
-      floor + "** for its enemy, stats and skills.\n\n" +
-      "Vestra cannot safely extract that interactive table into Discord yet, and will not make up a boss name or abilities." +
-      screenshot
-    )
-    .addFields({
-      name: "Combat preparation",
-      value: "Compare ranks and review the boss's counters, range, damage type and defensive skills before each run."
-    })
-    .setFooter({ text: "Automatic reference • No staff updates required" });
+function floorModal(floor) {
+  return new ModalBuilder()
+    .setCustomId("cintel_floor_submit")
+    .setTitle("Correct Conquest Floor")
+    .addComponents(new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("floor").setLabel("Current Conquest floor (one-time correction)")
+        .setStyle(TextInputStyle.Short).setValue(String(floor))
+        .setMinLength(1).setMaxLength(4).setRequired(true)
+    ));
 }
-
-export async function handleConquestIntelInteraction(interaction, { client, pool }) {
+function lookupModal(floor) {
+  return new ModalBuilder()
+    .setCustomId("cintel_lookup_submit").setTitle("Look Up Conquest Floor")
+    .addComponents(new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("floor").setLabel("Floor number")
+        .setStyle(TextInputStyle.Short).setValue(String(floor))
+        .setMinLength(1).setMaxLength(4).setRequired(true)
+    ));
+}
+async function staffAccess(interaction, isStaff) {
+  const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+  return !!member && (isStaff(member) || interaction.guild.ownerId === interaction.user.id);
+}
+async function showFloor(interaction, floor) {
+  const progress = { floor };
+  const source = await readState(SOURCE_KEY);
+  await interaction.reply({
+    embeds: [mainEmbed(progress, source)],
+    flags: MessageFlags.Ephemeral,
+    allowedMentions: { parse: [] }
+  });
+}
+async function tryClearBoss(interaction, confirmedFloor) {
+  const sql =
+    "UPDATE conquest_intel_progress SET floor = floor + 1, " +
+    "last_from = floor, last_to = floor + 1, last_action = 'down', " +
+    "updated_by = $3, updated_at = NOW() " +
+    "WHERE guild_id = $1 AND floor = $2 AND floor < $4 RETURNING floor";
+  const update = await context.pool.query(sql, [
+    interaction.guild.id, confirmedFloor, interaction.user.id, MAX_FLOOR
+  ]);
+  if (!update.rowCount) return null;
+  await context.pool.query(
+    "INSERT INTO conquest_intel_clear_history (guild_id, floor, cleared_by) " +
+    "VALUES ($1,$2,$3) ON CONFLICT (guild_id,floor) " +
+    "DO UPDATE SET cleared_by=EXCLUDED.cleared_by, cleared_at=NOW()",
+    [interaction.guild.id, confirmedFloor, interaction.user.id]
+  );
+  return update.rows[0].floor;
+}
+async function tryUndo(interaction, confirmedFloor) {
+  const update = await context.pool.query(
+    "UPDATE conquest_intel_progress SET floor=last_from, " +
+    "last_action='undo', updated_by=$3, updated_at=NOW() " +
+    "WHERE guild_id=$1 AND floor=$2 AND last_action='down' " +
+    "AND last_to=$2 AND last_from IS NOT NULL RETURNING floor",
+    [interaction.guild.id, confirmedFloor, interaction.user.id]
+  );
+  if (!update.rowCount) return null;
+  await context.pool.query(
+    "DELETE FROM conquest_intel_clear_history WHERE guild_id=$1 AND floor=$2",
+    [interaction.guild.id, update.rows[0].floor]
+  );
+  return update.rows[0].floor;
+}
+function confirmRow(action, floor) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("cintel_confirm_" + action + "_" + floor)
+      .setLabel(action === "down" ? "Confirm Boss Defeated" : "Confirm Undo")
+      .setStyle(action === "down" ? ButtonStyle.Success : ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("cintel_cancel")
+      .setLabel("Cancel").setStyle(ButtonStyle.Secondary)
+  );
+}
+export async function handleConquestIntelInteraction(interaction, { client, pool, isStaff }) {
   const id = interaction.customId || "";
   if (!id.startsWith("cintel_")) return false;
   context = { ...(context || {}), client, pool, guild: interaction.guild };
 
-  // Old modals and staff controls may survive in Discord from the previous
-  // deployment. Explicitly retire them rather than accepting new reports.
-  if (id === "cintel_report" || id === "cintel_set_floor" ||
-      id === "cintel_floor_submit" || id === "cintel_report_submit") {
+  if (id === "cintel_cancel" && interaction.isButton()) {
+    await interaction.update({ content: "Cancelled. Nothing changed.", components: [] });
+    return true;
+  }
+  // Legacy staff report forms from earlier deployments are retired.
+  if (["cintel_report", "cintel_report_submit", "cintel_set_floor_submit"].includes(id)) {
     await interaction.reply({
-      content: "Conquest Intel now updates automatically. There are no staff forms or daily maintenance steps.",
+      content: "Reports are retired. Boss Down advances floors; no daily reports are needed.",
       flags: MessageFlags.Ephemeral
     });
     return true;
   }
+  if (!interaction.isButton() && !interaction.isModalSubmit()) return false;
+  const privateReply = text => interaction.reply({
+    content: text, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] }
+  });
 
   if (interaction.isButton()) {
+    if (id === "cintel_current" || id === "cintel_reference") {
+      const current = await getProgress();
+      await showFloor(interaction, Number(current.floor));
+      return true;
+    }
+    if (id === "cintel_next" || id === "cintel_upcoming") {
+      const current = await getProgress();
+      const floor = Number(current.floor);
+      const source = await readState(SOURCE_KEY);
+      await interaction.reply({
+        embeds: [nextEmbed(floor, source)],
+        flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] }
+      });
+      return true;
+    }
     if (id === "cintel_lookup") {
-      const modal = new ModalBuilder()
-        .setTitle("Find a Conquest Floor")
-        .setCustomId("cintel_lookup_submit");
-      const field = new TextInputBuilder()
-        .setCustomId("floor")
-        .setLabel("Floor number from the game")
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder("136")
-        .setValue("136")
-        .setMaxLength(4)
-        .setRequired(true);
-      modal.addComponents(new ActionRowBuilder().addComponents(field));
-      await interaction.showModal(modal);
+      const current = await getProgress();
+      await interaction.showModal(lookupModal(current.floor));
       return true;
     }
-    if (id === "cintel_reference") {
-      await interaction.reply({
-        embeds: [floorSummary(REFERENCE_FLOOR)],
-        flags: MessageFlags.Ephemeral
-      });
+    if (id === "cintel_down" || id === "cintel_undo" || id === "cintel_set_floor") {
+      if (!await staffAccess(interaction, isStaff)) {
+        await privateReply("Only Ashen staff can change the guild's Conquest floor.");
+        return true;
+      }
+      const current = await getProgress();
+      if (id === "cintel_set_floor") {
+        await interaction.showModal(floorModal(current.floor));
+      } else if (id === "cintel_down") {
+        if (Number(current.floor) >= MAX_FLOOR) {
+          await privateReply("Maximum supported floor reached.");
+        } else {
+          await interaction.reply({
+            content: "⚔️ Confirm the guild defeated **Floor " + current.floor +
+              "**. This will advance Conquest Intel to **F" + (Number(current.floor) + 1) + "**.",
+            components: [confirmRow("down", Number(current.floor))],
+            flags: MessageFlags.Ephemeral
+          });
+        }
+      } else if (current.last_action !== "down" || Number(current.last_to) !== Number(current.floor)) {
+        await privateReply("There is no most recent Boss Down action to undo.");
+      } else {
+        await interaction.reply({
+          content: "↩️ Undo the last cleared boss? The tracker will return from **F" +
+            current.floor + "** to **F" + current.last_from + "**.",
+          components: [confirmRow("undo", Number(current.floor))],
+          flags: MessageFlags.Ephemeral
+        });
+      }
       return true;
     }
-    if (id === "cintel_current") {
-      await interaction.reply({
-        content: "The guild's floor cannot be read automatically from the game. " +
-          "Floor 136 was your last screenshot, not a live status. " +
-          "Use **Floor Lookup** to check a specific floor at " + ENEMIES_URL,
-        flags: MessageFlags.Ephemeral
-      });
-      return true;
-    }
-    if (id === "cintel_upcoming") {
-      await interaction.reply({
-        content: "## 📚 Guild Conquest Floors 136–150\n\n" +
-          Array.from({ length: 15 }, (_, i) => "**F" + (136 + i) + "**").join(" · ") +
-          "\n\nBrowse their **actual** boss names, skills and stats by selecting **Guild Conquest** and the floor number:\n" +
-          ENEMIES_URL +
-          "\n\n*These aren't predictions of the guild's current progress.*",
-        flags: MessageFlags.Ephemeral
-      });
+
+    const confirmation = id.match(/^cintel_confirm_(down|undo)_(\d{1,4})$/);
+    if (confirmation) {
+      if (!await staffAccess(interaction, isStaff)) {
+        await privateReply("Only Ashen staff can confirm Conquest progress.");
+        return true;
+      }
+      const base = parseFloor(confirmation[2]);
+      if (!base) {
+        await privateReply("Invalid floor.");
+        return true;
+      }
+      await interaction.deferUpdate();
+      const newFloor = confirmation[1] === "down"
+        ? await tryClearBoss(interaction, base)
+        : await tryUndo(interaction, base);
+      if (newFloor === null) {
+        await interaction.editReply({
+          content: "⚠️ Conquest floor changed since this confirmation appeared, or the action is no longer valid. Open the panel again.",
+          components: []
+        });
+      } else {
+        await updatePanel();
+        await interaction.editReply({
+          content: (confirmation[1] === "down" ? "✅ Boss defeated!" : "↩️ Last clear undone.") +
+            " Conquest Intel is now on **Floor " + newFloor + "**.",
+          components: []
+        });
+      }
       return true;
     }
   }
 
-  if (interaction.isModalSubmit() && id === "cintel_lookup_submit") {
-    const floor = floorNumber(interaction.fields.getTextInputValue("floor"));
-    if (!floor) {
-      await interaction.reply({
-        content: "Enter a valid number from 1 to 5000.",
-        flags: MessageFlags.Ephemeral
-      });
+  if (interaction.isModalSubmit()) {
+    if (id === "cintel_lookup_submit") {
+      const floor = parseFloor(interaction.fields.getTextInputValue("floor"));
+      if (floor) await showFloor(interaction, floor);
+      else await privateReply("Enter a valid floor number from 1 to 5000.");
       return true;
     }
-    await interaction.reply({
-      embeds: [floorSummary(floor)],
-      flags: MessageFlags.Ephemeral
-    });
-    return true;
+
+    if (id === "cintel_floor_submit") {
+      if (!await staffAccess(interaction, isStaff)) {
+        await privateReply("Only Ashen staff can correct the tracked floor.");
+        return true;
+      }
+      const floor = parseFloor(interaction.fields.getTextInputValue("floor"));
+      if (!floor) {
+        await privateReply("Enter a valid floor number from 1 to 5000.");
+        return true;
+      }
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await pool.query(
+        "UPDATE conquest_intel_progress SET floor=$2, last_from=NULL, " +
+        "last_to=NULL, last_action='correct', updated_by=$3, updated_at=NOW() " +
+        "WHERE guild_id=$1",
+        [interaction.guild.id, floor, interaction.user.id]
+      );
+      await updatePanel();
+      await interaction.editReply("🧭 Conquest Intel corrected to **Floor " + floor +
+        "**. Future Boss Down presses will advance from here.");
+      return true;
+    }
   }
 
-  await interaction.reply({
-    content: "This Conquest Intel control was retired. Please use the updated panel.",
-    flags: MessageFlags.Ephemeral
-  });
+  await privateReply("This is an outdated Conquest Intel control. Use the updated panel.");
   return true;
 }
