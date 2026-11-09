@@ -1,6 +1,7 @@
 import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType,
-  EmbedBuilder, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle
+  EmbedBuilder, MessageFlags, ModalBuilder, StringSelectMenuBuilder,
+  TextInputBuilder, TextInputStyle
 } from "discord.js";
 
 // ASHEN CONQUEST INTEL — existing channel and hand-curated names preserved.
@@ -313,28 +314,48 @@ function progressBar(floor) {
 }
 function mainEmbed(progress, source) {
   const floor = Number(progress.floor);
-  return new EmbedBuilder()
+  const boss = knownBoss(floor);
+  const st = boss?.stats;
+  const title = boss
+    ? "🕷️ CONQUEST INTEL  |  F" + floor + " • " + boss.name
+    : "⚔️ CONQUEST INTEL  |  FLOOR " + floor;
+  const embed = new EmbedBuilder()
     .setColor(0x8176CE)
-    .setTitle(knownBoss(floor)
-      ? "🕷️ ASHEN | F" + floor + " • " + knownBoss(floor).name
-      : "⚔️ ASHEN WARRIORS | CONQUEST INTEL")
-    .setDescription(
-      "### CURRENT TARGET — FLOOR " + floor + "\n\n" +
-      progressBar(floor) + "\n\n" +
-      fightStatus(floor) + "\n\n" +
-      "Use **Boss Down** after your guild defeats this floor. " +
-      "Vestra then advances the target automatically and updates this card."
+    .setTitle(title)
+    .setDescription(boss
+      ? "**MASTER • LV. " + boss.level + "**\n" +
+        "❤️ HP " + st.hp + "   •   ⚔️ ATK " + st.atk + "\n" +
+        "🛡️ DEF " + st.def + "   •   💨 SPD " + st.spd + "\n\n" +
+        "**⚠️ Key threats**\n" +
+        "Block " + st.blockRate + "  •  DMG RES " + st.damageResistance +
+        "  •  Crit " + st.critRate + "\n" +
+        "Skills: **" + boss.skillLabels.join(" · ") + "**\n\n" +
+        "**🎯 Weakness & approach**\n" +
+        "Elemental weakness unconfirmed (all five Affinity/Aegis values: 14.4K). " +
+        "Protect against critical hits and check Drag, Ailment and Summon skill effects."
+      : "**Boss identity and level not yet verified.**\n" +
+        "Use the game-data reference to inspect the next floor's actual skills, defenses and rank.\n\n" +
+        "**🛡️ Preparation:** Check counters, rank differences, and team survivability."
     )
-    .addFields(...bossFields(floor))
-    .setFooter({
-      text: knownBoss(floor)
-        ? "Boss details: in-game screenshots • Live game data not connected"
-        : "Source: Purrwikimania • " +
-          (source?.healthy ? "website reachable" : "website not confirmed") +
-          " • Game data is not connected"
+    .addFields({
+      name: "📍 PROGRESSION",
+      value: "**F" + floor + "**  →  **F" + Math.min(MAX_FLOOR, floor + 1) +
+        "** next  •  Staff use **Boss Down** after a clear."
     })
-    .setTimestamp(progress.updated_at ? new Date(progress.updated_at) : new Date());
+    .setFooter({
+      text: boss
+        ? "F136 stats: in-game screenshots • HP progress not live"
+        : "Floor tracked by Vestra • Boss data not verified"
+    });
+  if (floor === FIRST_KNOWN_FLOOR) {
+    embed.addFields({
+      name: "📸 LAST REPORTED HP",
+      value: "52% on Nov 9 • Historical screenshot, not live HP"
+    });
+  }
+  return embed;
 }
+
 function nextEmbed(floor, source) {
   return new EmbedBuilder()
     .setColor(0x4D5366)
@@ -353,32 +374,53 @@ function nextEmbed(floor, source) {
     );
 }
 function rows() {
+  // Two visible buttons total. Other actions move into one private menu.
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("cintel_down").setLabel("Boss Down").setEmoji("☠️").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId("cintel_undo").setLabel("Undo Last Clear").setEmoji("↩️").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("cintel_current").setLabel("Current Boss").setEmoji("⚔️").setStyle(ButtonStyle.Primary)
-    ),
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("cintel_next").setLabel("Next Boss").setEmoji("⏭️").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("cintel_lookup").setLabel("Find Floor").setEmoji("🔎").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("cintel_set_floor").setLabel("Correct Floor").setEmoji("🧭").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("cintel_stats").setLabel("Detailed Stats").setEmoji("📊").setStyle(ButtonStyle.Secondary)
-    ),
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(ENEMIES_URL).setLabel("Enemy Database").setEmoji("📚"),
-      new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(COMBAT_URL).setLabel("Combat Mechanics").setEmoji("🛡️")
+      new ButtonBuilder()
+        .setCustomId("cintel_down")
+        .setLabel("Boss Down")
+        .setEmoji("☠️")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId("cintel_more")
+        .setLabel("More Options")
+        .setEmoji("📖")
+        .setStyle(ButtonStyle.Secondary)
     )
   ];
 }
+function optionsMenu(staff) {
+  const options = [
+    { label: "Detailed Monster Stats", value: "stats", emoji: "📊", description: "All saved stats for the current boss" },
+    { label: "Skills & Strategy", value: "tactics", emoji: "🛡️", description: "Threats, weaknesses and combat notes" },
+    { label: "Upcoming Bosses", value: "upcoming", emoji: "⏭️", description: "Preview the next five floors" },
+    { label: "Find a Floor", value: "lookup", emoji: "🔎", description: "Look up a specific Conquest floor" }
+  ];
+  if (staff) {
+    options.push(
+      { label: "Undo Last Clear", value: "undo", emoji: "↩️", description: "Staff: reverse the previous Boss Down" },
+      { label: "Correct Current Floor", value: "correct", emoji: "🧭", description: "Staff: synchronize with the in-game floor" }
+    );
+  }
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("cintel_options_select")
+      .setPlaceholder("Choose what to view or manage")
+      .setMinValues(1)
+      .setMaxValues(1)
+      .addOptions(options)
+  );
+}
 function payload(progress, source) {
   return {
-    content: "# ASHEN / CONQUEST INTEL\n**Live guild floor tracker • Staff-confirmed progression**",
-    embeds: [mainEmbed(progress, source), nextEmbed(Number(progress.floor), source)],
+    content: "",
+    embeds: [mainEmbed(progress, source)],
     components: rows(),
     allowedMentions: { parse: [] }
   };
 }
+
 async function editPanel() {
   const channel = await getChannel();
   if (!channel) return null;
@@ -534,12 +576,88 @@ export async function handleConquestIntelInteraction(interaction, { client, pool
     });
     return true;
   }
+  if (interaction.isStringSelectMenu() && id === "cintel_options_select") {
+    const selection = interaction.values[0];
+    const current = await getProgress();
+    const floor = Number(current.floor);
+    if (selection === "stats") {
+      await interaction.update({
+        content: "📊 **Detailed Monster Stats • F" + floor + "**",
+        embeds: [statBreakdownEmbed(floor)],
+        components: []
+      });
+      return true;
+    }
+    if (selection === "tactics") {
+      await interaction.update({
+        content: "🛡️ **Skills & Strategy • F" + floor + "**",
+        embeds: [new EmbedBuilder()
+          .setColor(0x8176CE)
+          .setTitle("⚔️ Conquest Boss Intel • F" + floor)
+          .addFields(...bossFields(floor))],
+        components: []
+      });
+      return true;
+    }
+    if (selection === "upcoming") {
+      await interaction.update({
+        content: "⏭️ **Upcoming Conquest Bosses**",
+        embeds: [nextEmbed(floor, await readState(SOURCE_KEY))],
+        components: []
+      });
+      return true;
+    }
+    if (selection === "lookup") {
+      await interaction.showModal(lookupModal(floor));
+      return true;
+    }
+    if (selection === "undo" || selection === "correct") {
+      if (!await staffAccess(interaction, isStaff)) {
+        await interaction.update({
+          content: "Only Ashen staff can change Conquest progress.",
+          embeds: [],
+          components: []
+        });
+        return true;
+      }
+      if (selection === "correct") {
+        await interaction.showModal(floorModal(floor));
+        return true;
+      }
+      if (current.last_action !== "down" || Number(current.last_to) !== floor) {
+        await interaction.update({
+          content: "There is no most recent Boss Down action to undo.",
+          embeds: [],
+          components: []
+        });
+      } else {
+        await interaction.update({
+          content: "↩️ Undo the last clear? Return from **F" + floor +
+            "** to **F" + current.last_from + "**?",
+          embeds: [],
+          components: [confirmRow("undo", floor)]
+        });
+      }
+      return true;
+    }
+    await interaction.update({ content: "This option is unavailable.", components: [] });
+    return true;
+  }
   if (!interaction.isButton() && !interaction.isModalSubmit()) return false;
   const privateReply = text => interaction.reply({
     content: text, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] }
   });
 
   if (interaction.isButton()) {
+    if (id === "cintel_more") {
+      const staff = await staffAccess(interaction, isStaff);
+      await interaction.reply({
+        content: "📖 **Conquest Intel** — choose a view:",
+        components: [optionsMenu(staff)],
+        flags: MessageFlags.Ephemeral
+      });
+      return true;
+    }
     if (id === "cintel_stats") {
       const current = await getProgress();
       await interaction.reply({
