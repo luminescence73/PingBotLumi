@@ -2041,7 +2041,37 @@ function welcomeCard(member, languageName, playstyleName, socialName, timestamp 
 
 async function upsertRecruitIntroduction(channel, member, languageName, playstyleName, socialName) {
   let before;
-  let existing = null;
+  const matches = [];
+
+  const belongsToMember = message => {
+    if (message.author.id !== client.user.id) return false;
+
+    const isRecruitCard = message.embeds?.some(embed =>
+      /ASHEN\s*\|\s*NEW RECRUIT/i.test(embed.title || "")
+    );
+    if (!isRecruitCard) return false;
+
+    // Match either Discord mention syntax (<@id> or <@!id>).
+    const mentionedId = message.content?.match(/<@!?(\d+)>/)?.[1];
+    if (mentionedId === member.id) return true;
+
+    // Fallback for older cards that only stored the member name in the embed.
+    return message.embeds?.some(embed => {
+      const description = String(embed.description || "")
+        .replace(/\*\*/g, "")
+        .trim()
+        .toLowerCase();
+
+      return (
+        description.startsWith(member.displayName.toLowerCase() + " has completed") ||
+        description.startsWith(member.user.username.toLowerCase() + " has completed") ||
+        (
+          member.user.globalName &&
+          description.startsWith(member.user.globalName.toLowerCase() + " has completed")
+        )
+      );
+    });
+  };
 
   while (true) {
     const page = await channel.messages.fetch({
@@ -2051,16 +2081,18 @@ async function upsertRecruitIntroduction(channel, member, languageName, playstyl
 
     if (!page?.size) break;
 
-    existing = page.find(message =>
-      message.author.id === client.user.id &&
-      message.content?.includes(`<@${member.id}>`) &&
-      message.embeds?.some(embed => /ASHEN\s*\|\s*NEW RECRUIT/i.test(embed.title || ""))
-    ) || null;
+    for (const message of page.values()) {
+      if (belongsToMember(message)) matches.push(message);
+    }
 
-    if (existing) break;
     before = page.last()?.id;
     if (!before || page.size < 100) break;
   }
+
+  // Keep the oldest card so repeat onboarding never changes the member's
+  // original introduction position/date more than necessary.
+  matches.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+  const existing = matches[0] || null;
 
   const timestamp = existing?.createdAt || new Date();
   const payload = {
@@ -2077,12 +2109,23 @@ async function upsertRecruitIntroduction(channel, member, languageName, playstyl
     allowedMentions: { parse: [] }
   };
 
+  let canonical;
   if (existing) {
-    await existing.edit(payload);
-    return existing;
+    canonical = await existing.edit(payload);
+
+    // Remove every duplicate recruit card for this same member.
+    for (const duplicate of matches.slice(1)) {
+      await duplicate.delete().catch(error =>
+        console.warn(
+          `⚠️ Could not delete duplicate recruit card ${duplicate.id} for ${member.id}: ${error.message}`
+        )
+      );
+    }
+  } else {
+    canonical = await channel.send(payload);
   }
 
-  return channel.send(payload);
+  return canonical;
 }
 
 async function memberCardEmbed(member) {
