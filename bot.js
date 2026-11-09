@@ -17,6 +17,7 @@ import {
 } from "discord.js";
 import pg from "pg";
 import { createHash } from "node:crypto";
+import { setupSxsHub } from "./sxsHub.js";
 
 const { Pool } = pg;
 
@@ -4663,7 +4664,12 @@ client.once(Events.ClientReady, async readyClient => {
     ["Staff Requests", setupStaffRequestsPanel],
     ["Guild Members", setupGuildMembersPanel],
     ["Guild Ping Log", setupGuildPingsPanel],
-    ["Live Event Board", setupEventBoard]
+    ["Live Event Board", setupEventBoard],
+    ["Sword x Staff Live Hub", () => setupSxsHub({
+      client,
+      remindersChannelId: CHANNELS.REMINDERS,
+      staffRoles: STAFF_ROLES
+    })]
   ];
 
   for (const [label, fn] of setupTasks) {
