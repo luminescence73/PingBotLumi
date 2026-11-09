@@ -2039,6 +2039,52 @@ function welcomeCard(member, languageName, playstyleName, socialName, timestamp 
   );
 }
 
+async function upsertRecruitIntroduction(channel, member, languageName, playstyleName, socialName) {
+  let before;
+  let existing = null;
+
+  while (true) {
+    const page = await channel.messages.fetch({
+      limit: 100,
+      ...(before ? { before } : {})
+    }).catch(() => null);
+
+    if (!page?.size) break;
+
+    existing = page.find(message =>
+      message.author.id === client.user.id &&
+      message.content?.includes(`<@${member.id}>`) &&
+      message.embeds?.some(embed => /ASHEN\s*\|\s*NEW RECRUIT/i.test(embed.title || ""))
+    ) || null;
+
+    if (existing) break;
+    before = page.last()?.id;
+    if (!before || page.size < 100) break;
+  }
+
+  const timestamp = existing?.createdAt || new Date();
+  const payload = {
+    content: `<@${member.id}>`,
+    embeds: [
+      welcomeCard(
+        member,
+        languageName,
+        playstyleName,
+        socialName,
+        timestamp
+      )
+    ],
+    allowedMentions: { parse: [] }
+  };
+
+  if (existing) {
+    await existing.edit(payload);
+    return existing;
+  }
+
+  return channel.send(payload);
+}
+
 async function memberCardEmbed(member) {
   const primary = await inferPrimaryLanguage(member);
   const languageAccess = LANGUAGE_KEYS
@@ -5251,23 +5297,13 @@ client.on(Events.InteractionCreate, async interaction => {
       if (
         intro?.isTextBased()
       ) {
-        await intro.send({
-          content: `${member}`,
-          embeds: [
-            welcomeCard(
-              member,
-              LANGUAGES[session.language].name,
-              session.playstyle ? PLAYSTYLE[session.playstyle].name : "Not specified",
-              session.social ? SOCIAL[session.social].name : "Not specified"
-            )
-          ],
-          allowedMentions: {
-            parse: [],
-            users: [
-              member.id
-            ]
-          }
-        });
+        await upsertRecruitIntroduction(
+          intro,
+          member,
+          LANGUAGES[session.language].name,
+          session.playstyle ? PLAYSTYLE[session.playstyle].name : "Not specified",
+          session.social ? SOCIAL[session.social].name : "Not specified"
+        );
       }
 
       await deleteOnboardingSession(
