@@ -1264,7 +1264,7 @@ These records do not send extra role pings. Manage subscriptions in <#${CHANNELS
 }
 
 async function setupIntroductionPanel() {
-  const content = `# ASHEN / INTRODUCTIONS
+  const content = `# ✦ ASHEN / INTRODUCTIONS
 **New members enter here.**
 
 Vestra announces completed inductions with each member's language, playstyle, and social preference.
@@ -1274,7 +1274,7 @@ Welcome new recruits. Make them part of the guild.`;
   await upsertBotPanel(
     CHANNELS.INTRODUCTIONS, "panel_introductions",
     { content, embeds: [], components: [] },
-    "# ASHEN / INTRODUCTIONS"
+    "# ✦ ASHEN / INTRODUCTIONS"
   );
 }
 
@@ -1762,6 +1762,103 @@ async function createHelpThread(interaction, type, emoji, details) {
     content: `Request received: ${thread}`,
     flags: MessageFlags.Ephemeral
   });
+}
+
+async function migrateLegacyIntroductions() {
+  const completionKey = "introductions_plaintext_migration_v1";
+  if ((await dbGetState(completionKey))?.completed) return;
+
+  const channel = await client.channels.fetch(CHANNELS.INTRODUCTIONS).catch(() => null);
+  if (!channel?.isTextBased() || !channel.messages?.fetch) return;
+
+  let before;
+  let inspected = 0;
+  let converted = 0;
+  let failed = 0;
+
+  const fieldValue = (embed, label) =>
+    (embed?.fields || []).find(field =>
+      String(field.name || "").toLowerCase().includes(label)
+    )?.value || "Not specified";
+
+  while (true) {
+    const page = await channel.messages.fetch({
+      limit: 100,
+      ...(before ? { before } : {})
+    }).catch(() => null);
+
+    if (!page?.size) break;
+
+    for (const message of page.values()) {
+      inspected++;
+      if (message.author.id !== client.user.id) continue;
+      if (message.content?.includes("# ✦ ASHEN / INTRODUCTIONS")) continue;
+
+      let language = null;
+      let playstyle = null;
+      let social = null;
+      let memberLine = null;
+
+      const oldEmbed = message.embeds?.find(embed =>
+        /NEW RECRUIT/i.test(embed.title || "")
+      );
+
+      if (oldEmbed) {
+        language = fieldValue(oldEmbed, "language");
+        playstyle = fieldValue(oldEmbed, "playstyle");
+        social = fieldValue(oldEmbed, "social");
+
+        memberLine =
+          message.content?.match(/<@!?\d+>/)?.[0] ||
+          (oldEmbed.description
+            ? oldEmbed.description.replace(/^\*\*|\*\*$/g, "").trim()
+            : null) ||
+          "A new member";
+      } else if (/NEW RECRUIT/i.test(message.content || "")) {
+        language = message.content.match(/(?:🌐\s*)?\*\*Language:\*\*\s*(.+)/i)?.[1]?.trim() || "Not specified";
+        playstyle = message.content.match(/(?:⚔\s*)?\*\*Playstyle:\*\*\s*(.+)/i)?.[1]?.trim() || "Not specified";
+        social = message.content.match(/(?:💬\s*)?\*\*Social:\*\*\s*(.+)/i)?.[1]?.trim() || "Not specified";
+        memberLine =
+          message.content.match(/<@!?\d+>/)?.[0] ||
+          message.content.split("\n").find(line => /joined Ashen Warriors/i.test(line))?.replace(/ has completed.*$/i, "").trim() ||
+          "A new member";
+      } else {
+        continue;
+      }
+
+      const content = [
+        "# ✦ VESTRA / NEW RECRUIT",
+        `${memberLine} has completed onboarding and joined Ashen Warriors.`,
+        "",
+        `🌐 **Language:** ${language}`,
+        `⚔ **Playstyle:** ${playstyle}`,
+        `💬 **Social:** ${social}`
+      ].join("\n");
+
+      if (message.content === content && !message.embeds?.length) continue;
+
+      try {
+        await message.edit({
+          content,
+          embeds: [],
+          allowedMentions: { parse: [] }
+        });
+        converted++;
+      } catch (error) {
+        failed++;
+        console.error(`❌ Could not convert introduction message ${message.id}: ${error.message}`);
+      }
+    }
+
+    before = page.last()?.id;
+    if (!before || page.size < 100) break;
+  }
+
+  if (failed === 0) {
+    await dbSetState(completionKey, { completed: true, inspected, converted });
+  }
+
+  console.log(`✅ Introduction cleanup: ${converted} converted, ${failed} failed, ${inspected} scanned.`);
 }
 
 // =====================================================
@@ -4997,12 +5094,12 @@ client.on(Events.InteractionCreate, async interaction => {
       ) {
         await intro.send({
           content: [
-            "# ✦ NEW RECRUIT",
+            "# ✦ VESTRA / NEW RECRUIT",
             `${member} has completed onboarding and joined Ashen Warriors.`,
             "",
-            `**Language:** ${LANGUAGES[session.language].name}`,
-            `**Playstyle:** ${session.playstyle ? PLAYSTYLE[session.playstyle].name : "Not specified"}`,
-            `**Social:** ${session.social ? SOCIAL[session.social].name : "Not specified"}`
+            `🌐 **Language:** ${LANGUAGES[session.language].name}`,
+            `⚔ **Playstyle:** ${session.playstyle ? PLAYSTYLE[session.playstyle].name : "Not specified"}`,
+            `💬 **Social:** ${session.social ? SOCIAL[session.social].name : "Not specified"}`
           ].join("\n"),
           embeds: [],
 
@@ -5441,10 +5538,13 @@ client.once(Events.ClientReady, async readyClient => {
 
   startScheduler();
 
-  // Safe one-time migration of Vestra's existing event logs. Runs after
-  // scheduled notifications are enabled so history cleanup cannot delay them.
+  // Safe one-time migrations of Vestra's older generated messages.
+  void migrateLegacyIntroductions().catch(error => {
+    console.error("❌ Could not complete old introduction conversion:", error);
+  });
+
   void migrateLegacyAlertHistory().catch(error => {
-    console.error("❌ Could not complete old alert-history conversion:", error);
+    console.error("❌ Could not complete old guild-ping-log conversion:", error);
   });
 
   // Historical thread renaming is intentionally disabled. Staff have
