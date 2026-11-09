@@ -417,7 +417,7 @@ async function fetchLiveData() {
 
 function plainBoard(title, sections, sourceUrl, stale = false) {
   const body = [
-    `**${title}**`,
+    `# ✦ ${title.replace(/^SWORD X STAFF\\s*\\|\\s*/i, "")}`,
     "",
     ...sections.filter(Boolean),
     "",
