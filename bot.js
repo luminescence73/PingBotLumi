@@ -476,6 +476,65 @@ const TEXT = {
   }
 };
 
+
+const ONBOARDING_UI = {"english":{"step":"STEP {n} OF 4","title":["🌎 Set Your Language","🔔 Choose Your Alerts","🎮 Pick Your Playstyle","💬 Set Your Social Vibe"],"note":["Pick the language Vestra should use for your **notifications** and 🌐 reaction translations.\n\nYou can unlock other language chats later in Role Preferences.","Choose **as many as you want** from the guild and Server/Nexus Tournament reminders. You can change these anytime.","This is just for fun and helps others see how you like to play.","There is no wrong answer. This gives the community a hint about how you like to interact."],"review":["✅ Ready to Join Ashen Warriors","Everything looks good! Review your choices, then press **Finish Onboarding**.","🌎 Primary Language","🔔 Pings","🎮 Playstyle","💬 Social Vibe","🔕 No reminders","Not specified","You can change this later in Role Preferences."],"done":["✅ Welcome to Ashen Warriors!","Your roles and Vestra preferences have been saved. The rest of Ashen is open to you.","Head into the server, say hi, and make yourself at home. 🖤"],"choice":["No reminders","Casual","Competitive","Both","Skip","Chatty","Quiet","Either"],"suffix":" Pings","footer":"Vestra | Ashen Induction"},"spanish":{"step":"PASO {n} DE 4","title":["🌎 Elige tu idioma","🔔 Elige tus avisos","🎮 Elige tu estilo de juego","💬 Elige tu estilo social"],"note":["Elige el idioma que Vestra usará para tus **notificaciones** y traducciones con la reacción 🌐.\n\nPodrás acceder a otros canales de idiomas después en las preferencias de roles.","Elige **tantos recordatorios como quieras**, incluidos los de gremio y los torneos de Servidor/Nexus. Puedes cambiarlos cuando quieras.","Es solo por diversión y ayuda a los demás a conocer tu forma de jugar.","No hay respuestas incorrectas. Esto le da a la comunidad una idea de cómo prefieres relacionarte."],"review":["✅ Todo listo para unirte a Ashen Warriors","¡Todo está listo! Revisa tus opciones y pulsa **Finalizar incorporación**.","🌎 Idioma principal","🔔 Avisos","🎮 Estilo de juego","💬 Estilo social","🔕 Sin recordatorios","No especificado","Puedes cambiar estas opciones en las preferencias de roles."],"done":["✅ ¡Bienvenido/a a Ashen Warriors!","Tus roles y preferencias de Vestra están guardados. Ya puedes acceder al resto del servidor.","¡Entra, saluda y disfruta de la comunidad! 🖤"],"choice":["Sin recordatorios","Casual","Competitivo","Ambos","Omitir","Conversador","Reservado","Cualquiera"],"suffix":" — Avisos","footer":"Vestra | Incorporación a Ashen","events":["Reinicio","Conquista matutina","Conquista nocturna","Inicio del Clash","Batalla del Clash","Última llamada del Clash","Inscripción al Clash del gremio","Último aviso del Tirano del Caos","Torneo del servidor","Torneo Nexus"]},"french":{"step":"ÉTAPE {n} SUR 4","title":["🌎 Choisissez votre langue","🔔 Choisissez vos alertes","🎮 Choisissez votre style de jeu","💬 Choisissez votre style social"],"note":["Choisissez la langue que Vestra utilisera pour vos **notifications** et les traductions avec la réaction 🌐.\n\nVous pourrez accéder aux autres salons linguistiques dans les préférences de rôles.","Choisissez **autant de rappels que vous le souhaitez**, pour la guilde et les tournois Serveur/Nexus. Vous pourrez les modifier à tout moment.","Ce choix est juste pour le plaisir et permet aux autres de connaître votre façon de jouer.","Il n'y a pas de mauvaise réponse. Cela aide la communauté à connaître vos préférences d'échange."],"review":["✅ Prêt à rejoindre Ashen Warriors","Tout est prêt ! Vérifiez vos choix, puis appuyez sur **Terminer l’intégration**.","🌎 Langue principale","🔔 Alertes","🎮 Style de jeu","💬 Style social","🔕 Aucun rappel","Non précisé","Vous pourrez modifier ces choix dans les préférences de rôles."],"done":["✅ Bienvenue chez Ashen Warriors !","Vos rôles et préférences Vestra sont enregistrés. Le reste du serveur est maintenant accessible.","Venez saluer la communauté et installez-vous ! 🖤"],"choice":["Aucun rappel","Détente","Compétitif","Les deux","Passer","Bavard","Discret","L'un ou l'autre"],"suffix":" — Alertes","footer":"Vestra | Accueil Ashen","events":["Réinitialisation","Conquête du matin","Conquête du soir","Début du Clash","Bataille du Clash","Dernier appel du Clash","Inscription au Clash de guilde","Dernier appel du Tyran du chaos","Tournoi du serveur","Tournoi Nexus"]},"german":{"step":"SCHRITT {n} VON 4","title":["🌎 Wähle deine Sprache","🔔 Wähle deine Benachrichtigungen","🎮 Wähle deinen Spielstil","💬 Wähle deinen sozialen Stil"],"note":["Wähle die Sprache, die Vestra für deine **Benachrichtigungen** und Übersetzungen über die 🌐-Reaktion verwenden soll.\n\nWeitere Sprachkanäle kannst du später in den Rolleneinstellungen freischalten.","Wähle **so viele Erinnerungen wie du möchtest** für Gildenevents und Server-/Nexus-Turniere. Du kannst sie jederzeit ändern.","Das ist nur zum Spaß und hilft anderen, deinen Spielstil kennenzulernen.","Es gibt keine falsche Antwort. So erfährt die Community, wie du dich am liebsten austauschst."],"review":["✅ Bereit für Ashen Warriors","Alles ist bereit! Überprüfe deine Auswahl und klicke auf **Onboarding abschließen**.","🌎 Hauptsprache","🔔 Benachrichtigungen","🎮 Spielstil","💬 Sozialer Stil","🔕 Keine Erinnerungen","Nicht angegeben","Du kannst dies später in den Rolleneinstellungen ändern."],"done":["✅ Willkommen bei Ashen Warriors!","Deine Rollen und Vestra-Einstellungen sind gespeichert. Der Rest des Servers ist jetzt freigeschaltet.","Sag Hallo und fühl dich wie zu Hause! 🖤"],"choice":["Keine Erinnerungen","Entspannt","Wettbewerbsorientiert","Beides","Überspringen","Gesprächig","Ruhig","Beides"],"suffix":" — Hinweise","footer":"Vestra | Ashen-Einführung","events":["Zurücksetzung","Morgen-Eroberung","Abend-Eroberung","Clash-Beginn","Clash-Kampf","Letzter Clash-Aufruf","Gilden-Clash-Anmeldung","Chaos-Tyrann: Letzter Aufruf","Serverturnier","Nexus-Turnier"]},"portuguese":{"step":"ETAPA {n} DE 4","title":["🌎 Escolha seu idioma","🔔 Escolha seus alertas","🎮 Escolha seu estilo de jogo","💬 Escolha seu estilo social"],"note":["Escolha o idioma que Vestra usará para suas **notificações** e traduções com a reação 🌐.\n\nVocê poderá acessar outros canais de idiomas depois nas preferências de cargos.","Escolha **quantos lembretes quiser** da guilda e dos torneios Servidor/Nexus. Você poderá alterá-los quando quiser.","Isso é só por diversão e ajuda os outros a conhecer seu jeito de jogar.","Não existe resposta errada. Isso ajuda a comunidade a entender como você prefere interagir."],"review":["✅ Pronto(a) para entrar em Ashen Warriors","Tudo certo! Revise suas escolhas e clique em **Concluir integração**.","🌎 Idioma principal","🔔 Alertas","🎮 Estilo de jogo","💬 Estilo social","🔕 Sem lembretes","Não especificado","Você pode mudar essas escolhas depois nas preferências de cargos."],"done":["✅ Boas-vindas a Ashen Warriors!","Seus cargos e preferências do Vestra foram salvos. O restante do servidor já está disponível.","Entre, cumprimente o pessoal e fique à vontade! 🖤"],"choice":["Sem lembretes","Casual","Competitivo","Ambos","Pular","Conversador","Reservado","Qualquer um"],"suffix":" — Alertas","footer":"Vestra | Integração Ashen","events":["Reinício","Conquista da manhã","Conquista da noite","Início do Clash","Batalha do Clash","Última chamada do Clash","Inscrição no Clash da guilda","Última chamada do Tirano do Caos","Torneio do servidor","Torneio Nexus"]},"japanese":{"step":"ステップ {n} / 4","title":["🌎 言語を選択","🔔 通知を選択","🎮 プレイスタイルを選択","💬 交流スタイルを選択"],"note":["Vestraの**通知**と🌐リアクション翻訳に使用する言語を選んでください。\n\nほかの言語チャンネルは後からロール設定で追加できます。","ギルドのリマインダーとサーバー/Nexusトーナメントの通知から、**必要なものをすべて**選んでください。設定はいつでも変更できます。","ほかのメンバーにあなたのプレイスタイルを知ってもらうための気軽な選択です。","正解・不正解はありません。コミュニティでどのように交流したいかを教えてください。"],"review":["✅ Ashen Warriorsへの参加準備完了","設定を確認して、**オンボーディングを完了**を押してください。","🌎 メイン言語","🔔 通知","🎮 プレイスタイル","💬 交流スタイル","🔕 通知なし","未設定","あとからロール設定で変更できます。"],"done":["✅ Ashen Warriorsへようこそ！","ロールとVestraの設定が保存されました。サーバーのほかのチャンネルも利用できます。","気軽にあいさつして交流を楽しんでください！ 🖤"],"choice":["通知なし","カジュアル","競争重視","両方","スキップ","おしゃべり","静か","どちらでも"],"suffix":" — 通知","footer":"Vestra | Ashen参加登録","events":["リセット","朝のコンクエスト","夜のコンクエスト","クラッシュ開始","クラッシュ戦闘","クラッシュ最終案内","ギルドクラッシュ登録","カオスタイラント最終案内","サーバートーナメント","Nexusトーナメント"]}};
+const ONBOARDING_EVENT_KEYS = ["reset","morning","night","opening","battle","final","registration","chaos_last_call","sever","nexus"];
+const ONBOARDING_CHOICE_KEYS = ["none","casual","competitive","both","skip","chatty","quiet","either"];
+function onboardingLocale(language) {
+  return ONBOARDING_UI[language] || ONBOARDING_UI.english;
+}
+function localizedOnboardingEvent(language, key) {
+  const copy = onboardingLocale(language);
+  return copy.events?.[ONBOARDING_EVENT_KEYS.indexOf(key)] ||
+    REMINDERS[key]?.name || TOURNAMENTS[key]?.name || key;
+}
+function localizedOnboardingChoice(language, key) {
+  const copy = onboardingLocale(language);
+  return copy.choice[ONBOARDING_CHOICE_KEYS.indexOf(key)] || key;
+}
+function onboardingStageContent(language, stage) {
+  const copy = onboardingLocale(language);
+  const baseQuestion = stage === 1 ? "" :
+    (stage === 2 ? TEXT[language].reminders :
+     stage === 3 ? TEXT[language].playstyle : TEXT[language].social);
+  return [
+    "# " + copy.title[stage - 1], "",
+    "**" + copy.step.replace("{n}", String(stage)) + "**", "",
+    baseQuestion, baseQuestion ? "" : null,
+    copy.note[stage - 1], "", "*" + copy.footer + "*"
+  ].filter(part => part !== null).join("\n");
+}
+function onboardingReviewContent(session) {
+  const language = session.language;
+  const copy = onboardingLocale(language);
+  const info = LANGUAGES[language];
+  const reminders = (session.reminders || []).map(key => {
+    if (REMINDERS[key]) return REMINDERS[key].emoji + " " + localizedOnboardingEvent(language, key);
+    if (key.startsWith("tournament:")) {
+      const tournamentKey = key.split(":")[1];
+      return TOURNAMENTS[tournamentKey]
+        ? TOURNAMENTS[tournamentKey].emoji + " " + localizedOnboardingEvent(language, tournamentKey)
+        : key;
+    }
+    return key;
+  });
+  const play = session.playstyle ? PLAYSTYLE[session.playstyle] : null;
+  const social = session.social ? SOCIAL[session.social] : null;
+  return [
+    "# " + copy.review[0], "",
+    copy.review[1], "",
+    "## " + copy.review[2], info.emoji + " **" + info.name + "**", "",
+    "## " + copy.review[3], reminders.length ? reminders.join("\n") : copy.review[6], "",
+    "## " + copy.review[4], play ? play.emoji + " **" + localizedOnboardingChoice(language, session.playstyle) + "**" : copy.review[7], "",
+    "## " + copy.review[5], social ? social.emoji + " **" + localizedOnboardingChoice(language, session.social) + "**" : copy.review[7], "",
+    "*" + copy.review[8] + "*"
+  ].join("\n");
+}
+function onboardingCompleteContent(language) {
+  const copy = onboardingLocale(language);
+  return ["# " + copy.done[0], "", TEXT[language].done, "", copy.done[1], "", copy.done[2]].join("\n");
+}
+
 const sessions = new Map();
 
 // =====================================================
