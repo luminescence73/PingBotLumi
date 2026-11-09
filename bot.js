@@ -3478,6 +3478,119 @@ async function recoverAshenMainCategories(guildOverride = null) {
 }
 
 // =====================================================
+// ASHEN SIDEBAR ORGANIZATION — PRESERVE CHANNEL IDS / ACLS
+// =====================================================
+// Run on startup so newly-created SxS information channels are kept in Intel.
+// No channel deletion, no role changes, no message deletion.
+async function organizeAshenSidebar(guildOverride = null) {
+  const guild = await resolveAshenGuild(guildOverride);
+  if (!guild) return;
+  await guild.channels.fetch();
+
+  const definitions = [
+    { name: "✦ ASHEN | ENTRY", existing: ["ASHEN | ENTRY"], channels: [
+      "entry", "code", "induction", "support", "command-requests",
+      "roster", "vestra-settings", "ashen-showcase"
+    ] },
+    { name: "✧ ASHEN | COMMAND", existing: ["ASHEN | COMMAND"], channels: [
+      "ashen-announcements", "sxs-announcements", "alert-history",
+      "highlights", "war-board"
+    ] },
+    { name: "✦ SWORD X STAFF | GUILD", existing: ["SWORD X STAFF | OPERATIONS"], channels: [
+      "sxs-event-board", "general-en", "general-es", "general-fr",
+      "general-de", "general-pt", "general-ja", "sxs-media", "sxs-resources"
+    ] },
+    { name: "✧ SWORD X STAFF | INTEL", existing: [], channels: [
+      "seasonal-info", "weekly-rotation", "updates-and-news",
+      "sxs-roadmap", "gift-codes", "ingredient-maps",
+      "builds-and-guides", "sxs-database"
+    ] },
+    { name: "◇ ASHEN | COMMONS", existing: [], channels: [
+      "general", "media", "memes", "movies-shows", "other-games",
+      "food", "music", "random-topics", "travel"
+    ] },
+    { name: "⌁ ASHEN | VOICE", existing: ["ASHEN | VOICE"], channels: [] }
+  ];
+
+  const categoryFor = new Map();
+  for (const def of definitions) {
+    let category = guild.channels.cache.find(ch =>
+      ch.type === ChannelType.GuildCategory &&
+      (ch.name === def.name || def.existing.includes(ch.name))
+    );
+    if (!category) {
+      category = await guild.channels.create({
+        name: def.name,
+        type: ChannelType.GuildCategory,
+        reason: "Approved Ashen Warriors sidebar organization"
+      });
+    } else if (category.name !== def.name) {
+      await category.setName(def.name, "Approved Ashen Warriors sidebar organization");
+    }
+    categoryFor.set(def.name, category);
+  }
+
+  const entry = categoryFor.get("✦ ASHEN | ENTRY");
+  const command = categoryFor.get("✧ ASHEN | COMMAND");
+  const guildCategory = categoryFor.get("✦ SWORD X STAFF | GUILD");
+  const intel = categoryFor.get("✧ SWORD X STAFF | INTEL");
+  const commons = categoryFor.get("◇ ASHEN | COMMONS");
+  const voice = categoryFor.get("⌁ ASHEN | VOICE");
+
+  // Keep existing category-ID references used by translation and onboarding.
+  WELCOME_CATEGORY_ID = entry.id;
+  IMPORTANT_CATEGORY_ID = command.id;
+  SOCIAL_CATEGORY_ID = commons.id;
+
+  const byName = (name, type = ChannelType.GuildText) =>
+    guild.channels.cache.find(ch => ch.type === type && ch.name === name);
+
+  // Move only named existing channels; preserve per-channel overwrites.
+  for (const def of definitions) {
+    const parent = categoryFor.get(def.name);
+    for (const name of def.channels) {
+      const channel = byName(name);
+      if (!channel) continue;
+      if (channel.parentId !== parent.id) {
+        await channel.setParent(parent.id, {
+          lockPermissions: false,
+          reason: "Approved Ashen sidebar organization; retain channel permissions"
+        });
+      }
+    }
+  }
+
+  // Preserve existing voice rooms and their permissions, including staff voice.
+  for (const name of ["General", "Squad", "Boss Runs", "Command", "Afk", "Other Games", "Social"]) {
+    const channel = byName(name, ChannelType.GuildVoice);
+    if (channel && channel.parentId !== voice.id) {
+      await channel.setParent(voice.id, { lockPermissions: false });
+    }
+  }
+
+  // Use bulk position editing to retain intended order within each category.
+  for (const def of definitions) {
+    const parent = categoryFor.get(def.name);
+    const channels = def.channels.map(name => byName(name)).filter(Boolean);
+    if (def.name === "⌁ ASHEN | VOICE") {
+      channels.push(...["General", "Squad", "Boss Runs", "Command", "Afk", "Other Games", "Social"]
+        .map(name => byName(name, ChannelType.GuildVoice)).filter(Boolean));
+    }
+    for (let i = 0; i < channels.length; i++) {
+      if (channels[i].parentId === parent.id) {
+        await channels[i].setPosition(i).catch(error =>
+          console.warn(`⚠️ Could not position #${channels[i].name}: ${error.message}`)
+        );
+      }
+    }
+  }
+  for (const [i, def] of definitions.entries()) {
+    await categoryFor.get(def.name).setPosition(i).catch(() => {});
+  }
+  console.log("✅ Ashen sidebar organization applied; channel IDs and permissions retained.");
+}
+
+// =====================================================
 // ASHEN SIDEBAR THEME
 // =====================================================
 
@@ -4643,8 +4756,8 @@ client.once(Events.ClientReady, async readyClient => {
 
   const ashenGuild = await resolveAshenGuild().catch(() => null);
 
-  await recoverAshenMainCategories(ashenGuild).catch(error => {
-    console.error("⚠️ Emergency Ashen category recovery:", error.message);
+  await organizeAshenSidebar(ashenGuild).catch(error => {
+    console.error("⚠️ Ashen sidebar organization:", error.message);
   });
 
   // Channel/category names are now controlled manually by Ashen staff.
