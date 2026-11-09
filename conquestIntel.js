@@ -203,6 +203,44 @@ const BOSS_DATA = Object.freeze({
     skillLabels: Object.freeze(["Debuff","DMG","DMG","Movement","Counterattack"]),
     threats: "Debuff, Movement and Counterattack appear in the boss's skill list. Check their effects, range and triggers before attacking.",
     note: "Source: supplied game screenshots of F138; floor was locked."
+  }),
+  139: Object.freeze({
+    name: "Regal Cactus", emoji: "🌵",
+    artwork: { filename: "regal-cactus-f139.webp", asset: "./assets/conquest/regal-cactus-f139.webp.b64" },
+    level: 364, rank: "Master",
+    stats: Object.freeze({
+      hp: "385B", atk: "21.6M", def: "15.6M", spd: "8.73M",
+      resilience: "240", critRate: "60.6%", critDamage: "50%",
+      critResistance: "32.3%", blockRate: "53.1%", blockEfficiency: "100%",
+      accuracy: "27.3%", damageBoost: "45.5%", damageResistance: "43.8%",
+      healingBoost: "0%", effectHitRate: "132K", effectResistance: "132K",
+      elementalMastery: "165K", elementalResistance: "165K",
+      physicalMastery: "165K", physicalResistance: "165K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 14.9K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 14.9K each"
+    }),
+    skillLabels: Object.freeze(["DMG", "DMG", "DMG", "Buff"]),
+    threats: "Three damage-type skills and one Buff skill are shown. With 21.6M ATK and 8.73M SPD, plan for heavy and relatively fast attacks; check what the Buff enhances.",
+    note: "Source: supplied game screenshots of F139; floor was locked."
+  }),
+  140: Object.freeze({
+    name: "Polyhedral Sun", emoji: "☀️",
+    artwork: { filename: "polyhedral-sun-f140.webp", asset: "./assets/conquest/polyhedral-sun-f140.webp.b64" },
+    level: 370, rank: "Master",
+    stats: Object.freeze({
+      hp: "399B", atk: "13.3M", def: "19.4M", spd: "6.83M",
+      resilience: "240", critRate: "61%", critDamage: "100%",
+      critResistance: "32.3%", blockRate: "53.1%", blockEfficiency: "100%",
+      accuracy: "27.3%", damageBoost: "45.6%", damageResistance: "43.8%",
+      healingBoost: "0%", effectHitRate: "139K", effectResistance: "139K",
+      elementalMastery: "174K", elementalResistance: "174K",
+      physicalMastery: "174K", physicalResistance: "174K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 15.1K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 15.1K each"
+    }),
+    skillLabels: Object.freeze(["DMG", "DMG", "Buff", "DMG"]),
+    threats: "Three damage-type skills and a Buff skill are visible. Watch its 100% Crit DMG, 61% Crit Rate and 19.4M DEF; inspect the Buff's effect before adjusting your team's defenses.",
+    note: "Source: supplied game screenshots of F140; floor was locked."
   })
 });
 
