@@ -1264,6 +1264,9 @@ These records do not send extra role pings. Manage subscriptions in <#${CHANNELS
 }
 
 async function setupIntroductionPanel() {
+  const channel = await client.channels.fetch(CHANNELS.INTRODUCTIONS).catch(() => null);
+  if (!channel?.isTextBased() || !channel.messages?.fetch) return;
+
   const content = `# ✦ ASHEN / INTRODUCTIONS
 **New members enter here.**
 
@@ -1271,10 +1274,83 @@ Vestra announces completed inductions with each member's language, playstyle, an
 
 Welcome new recruits. Make them part of the guild.`;
 
-  await upsertBotPanel(
-    CHANNELS.INTRODUCTIONS, "panel_introductions",
-    { content, embeds: [], components: [] },
-    "# ✦ ASHEN / INTRODUCTIONS"
+  // Find every old copy of the channel information post. Keep the oldest
+  // existing copy so it stays as high in channel history as Discord allows,
+  // then delete every replica and pin the canonical message.
+  const replicas = [];
+  let before;
+
+  while (true) {
+    const page = await channel.messages.fetch({
+      limit: 100,
+      ...(before ? { before } : {})
+    }).catch(() => null);
+
+    if (!page?.size) break;
+
+    for (const message of page.values()) {
+      if (message.author.id !== client.user.id) continue;
+
+      const text = [
+        message.content || "",
+        ...(message.embeds || []).flatMap(embed => [
+          embed.title || "",
+          embed.description || ""
+        ])
+      ].join("\n");
+
+      const isIntroPanel =
+        /new members enter here/i.test(text) ||
+        /vestra announces completed inductions/i.test(text) ||
+        /ashen\s*[\/|]\s*(?:introductions|roster)/i.test(text);
+
+      // Do not mistake member recruit cards for the channel information post.
+      const isRecruitCard =
+        /new recruit/i.test(text) ||
+        /new ashen warrior/i.test(text) ||
+        /welcome\s+<@!?\d+>/i.test(text);
+
+      if (isIntroPanel && !isRecruitCard) replicas.push(message);
+    }
+
+    before = page.last()?.id;
+    if (!before || page.size < 100) break;
+  }
+
+  replicas.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+  let canonical = replicas[0] || null;
+
+  if (canonical) {
+    await canonical.edit({
+      content,
+      embeds: [],
+      components: [],
+      allowedMentions: { parse: [] }
+    });
+  } else {
+    canonical = await channel.send({
+      content,
+      embeds: [],
+      components: [],
+      allowedMentions: { parse: [] }
+    });
+  }
+
+  for (const duplicate of replicas.slice(1)) {
+    await duplicate.delete().catch(error =>
+      console.warn(`⚠️ Could not delete duplicate introductions panel ${duplicate.id}: ${error.message}`)
+    );
+  }
+
+  await canonical.pin("Keep the Ashen introductions guide easy to find").catch(error =>
+    console.warn(`⚠️ Could not pin introductions guide: ${error.message}`)
+  );
+
+  await dbSetState("panel_introductions", { messageId: canonical.id });
+
+  console.log(
+    `✅ Introductions guide ready; ${Math.max(0, replicas.length - 1)} duplicate panel(s) removed.`
   );
 }
 
