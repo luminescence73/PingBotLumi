@@ -134,7 +134,7 @@ function sourceLabel(source) {
 // This entry is preserved when the guild advances to a new floor.
 const BOSS_DATA = Object.freeze({
   136: Object.freeze({
-    name: "Spider Queen",
+    name: "Spider Queen", emoji: "🕷️",
     artwork: { filename: "spider-queen-f136.webp", asset: "./assets/conquest/spider-queen-f136.webp.b64" },
     level: 346,
     rank: "Master",
@@ -167,7 +167,7 @@ const BOSS_DATA = Object.freeze({
     note: "Captured from in-game Conquest F136 boss and Monster Stats screenshots."
   }),
   137: Object.freeze({
-    name: "Cyclopean Geocrusher",
+    name: "Cyclopean Geocrusher", emoji: "🪨",
     artwork: { filename: "cyclopean-geocrusher-f137.webp", asset: "./assets/conquest/cyclopean-geocrusher-f137.webp.b64" },
     level: 352, rank: "Master",
     stats: Object.freeze({
@@ -186,7 +186,7 @@ const BOSS_DATA = Object.freeze({
     note: "Source: supplied game screenshots of F137; floor was locked."
   }),
   138: Object.freeze({
-    name: "Bovine Titan",
+    name: "Bovine Titan", emoji: "🐂",
     artwork: { filename: "bovine-titan-f138.webp", asset: "./assets/conquest/bovine-titan-f138.webp.b64" },
     level: 358, rank: "Master",
     stats: Object.freeze({
@@ -281,7 +281,7 @@ function intelEmbed(floor, view = "summary") {
   }
 
   const st = boss.stats;
-  const title = "🕷️ F" + floor + " · " + boss.name;
+  const title = (boss.emoji || "⚔️") + " F" + floor + " · " + boss.name;
   const idLine = "**" + boss.rank + " · Lv. " + boss.level + "**";
 
   if (view === "offense") {
@@ -365,7 +365,7 @@ function mainEmbed(progress, source, includeArtwork = false) {
   const boss = knownBoss(floor);
   const st = boss?.stats;
   const title = boss
-    ? "🕷️ CONQUEST INTEL  |  F" + floor + " • " + boss.name
+    ? (boss.emoji || "⚔️") + " CONQUEST INTEL  |  F" + floor + " • " + boss.name
     : "⚔️ CONQUEST INTEL  |  FLOOR " + floor;
   const embed = new EmbedBuilder()
     .setColor(0x8176CE)
