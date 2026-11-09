@@ -4367,6 +4367,16 @@ async function applyAshenPermissions(guildOverride = null) {
       SendMessages: true,
       AddReactions: true
     }, "Introductions available after onboarding");
+    if (me) {
+      await safeEdit(introductions, me, {
+        ViewChannel: true,
+        ReadMessageHistory: true,
+        SendMessages: true,
+        ManageMessages: true,
+        ManageThreads: true,
+        EmbedLinks: true
+      }, "Allow Vestra to rebuild and deduplicate introductions");
+    }
   }
 
   const settings = textChannel("vestra-settings");
