@@ -127,49 +127,181 @@ function sourceLabel(source) {
   return "Availability unconfirmed";
 }
 
-// Visual intel. Only the screenshot's historical details are established.
-// Actual floor-specific enemy levels, elements, skills, and resistances need
-// a verified game-data endpoint; we never interpolate or invent those.
+// F136 screenshot-confirmed data. Exact boss numbers are from the player's
+// in-game Monster Stats screen (not from the public website's HTML).
+// This entry is preserved when the guild advances to a new floor.
+const BOSS_DATA = Object.freeze({
+  136: Object.freeze({
+    name: "Spider Queen",
+    level: 346,
+    rank: "Master",
+    stats: Object.freeze({
+      hp: "346B",
+      atk: "13.9M",
+      def: "14M",
+      spd: "6.68M",
+      resilience: "240",
+      critRate: "60.1%",
+      critDamage: "50%",
+      critResistance: "32.2%",
+      blockRate: "53%",
+      blockEfficiency: "100%",
+      accuracy: "27.2%",
+      damageBoost: "45.5%",
+      damageResistance: "43.8%",
+      healingBoost: "0%",
+      effectHitRate: "114K",
+      effectResistance: "114K",
+      elementalMastery: "143K",
+      elementalResistance: "143K",
+      physicalMastery: "143K",
+      physicalResistance: "143K",
+      elementalAffinities: "Wind / Water / Fire / Light / Dark: 14.4K each",
+      elementalAegis: "Wind / Water / Fire / Light / Dark: 14.4K each"
+    }),
+    skillLabels: Object.freeze(["Drag", "Ailment", "DMG", "Summon"]),
+    note: "Captured from in-game Conquest F136 boss and Monster Stats screenshots."
+  })
+});
+
+function knownBoss(floor) {
+  return BOSS_DATA[Number(floor)] || null;
+}
+
+// Display compact decision-useful Intel; every stat is also accessible through
+// the Detailed Stats button, without requiring a staff input or daily update.
 function bossFields(floor) {
-  const known = floor === FIRST_KNOWN_FLOOR;
+  const boss = knownBoss(floor);
+  if (boss) {
+    const st = boss.stats;
+    return [
+      {
+        name: "🕷️ BOSS IDENTIFICATION",
+        value: "**" + boss.name + "** • Level **" + boss.level +
+          "** • **" + boss.rank + "** rank\n" +
+          "Confirmed directly in-game at F" + floor + "."
+      },
+      {
+        name: "📊 CORE STATS",
+        value: "❤️ **HP:** " + st.hp + "  •  ⚔️ **ATK:** " + st.atk +
+          "\n🛡️ **DEF:** " + st.def + "  •  💨 **SPD:** " + st.spd +
+          "\n**Resilience:** " + st.resilience
+      },
+      {
+        name: "🛡️ DEFENSIVE STRENGTHS",
+        value: "**Block Rate:** " + st.blockRate +
+          " • **Block Efficiency:** " + st.blockEfficiency +
+          "\n**DMG RES:** " + st.damageResistance +
+          " • **Crit RES:** " + st.critResistance +
+          "\nHer high block chance and damage resistance can make attacks less effective."
+      },
+      {
+        name: "⚡ OFFENSIVE STRENGTHS",
+        value: "**Crit Rate:** " + st.critRate +
+          " • **Crit DMG:** " + st.critDamage +
+          "\n**DMG Boost:** " + st.damageBoost +
+          " • **Accuracy:** " + st.accuracy +
+          "\nPrepare for damaging attacks and potential critical hits."
+      },
+      {
+        name: "🌀 VISIBLE SKILL TYPES",
+        value: "**Drag • Ailment • DMG • Summon**\n" +
+          "These are the labels shown under the four skill icons. " +
+          "Check their in-game descriptions for exact ranges, triggers, " +
+          "status effects, and summon behavior."
+      },
+      {
+        name: "🎯 WEAKNESSES / ELEMENTAL INTEL",
+        value: "**No specific elemental weakness confirmed.**\n" +
+          "All five Affinities and Aegis values are **14.4K each** " +
+          "(Wind, Water, Fire, Light, Dark). These equal displayed values " +
+          "don't identify a preferred damage element."
+      },
+      {
+        name: "📋 TACTICAL PRIORITIES",
+        value: "• **Survivability:** Mind the 60.1% Crit Rate and Drag/Ailment skill types.\n" +
+          "• **Damage:** High Block Rate and DMG RES may blunt your attacks.\n" +
+          "• **Summons:** Check when the Summon skill activates; plan for extra targets if it creates adds.\n" +
+          "• **Rank gap:** This Master boss may sharply punish lower-ranked attackers.\n" +
+          "• **Second run:** Compare survival and damage before swapping skills."
+      }
+    ];
+  }
   return [
     {
       name: "🐉 BOSS / IDENTIFICATION",
-      value: known
-        ? "Nov 9 screenshot: **purple armored, horned creature** with large claws and a pale mask-like face. **Official name not yet identified.**"
-        : "**Identity not verified for this floor.**"
+      value: "**Name, level and rank not yet verified for F" + floor + ".**"
     },
     {
       name: "📊 LEVEL • RANK",
-      value: "**Level:** Not verified\n**Rank:** Not verified\n" +
-        "The game's **Guild Conquest** database provides floor-specific levels/ranks, but Vestra hasn't confirmed a safe way to import the individual records."
+      value: "Not yet confirmed for this floor. Check the Guild Conquest floor view in the enemy database."
     },
     {
       name: "⚡ STRENGTHS",
-      value: "Exact F" + floor + " resistances and skills **not verified**. " +
-        "**Important:** Conquest bosses can have counter passives. Inspect each **skill icon**; " +
-        "players report that counter details may explain elemental strength/weakness and why multi-hit builds take heavy retaliation."
+      value: "Check enemy rank, damage resistance, block rate, critical stats and skill triggers."
     },
     {
       name: "🎯 WEAKNESSES",
-      value: "Exact elemental vulnerability **not verified**. " +
-        "Do not assume purple coloring means Dark damage or Dark resistance. " +
-        "Test the boss's actual skill and resistance information before changing elements."
+      value: "No specific elemental vulnerability confirmed. Do not assume appearance indicates damage type."
     },
     {
       name: "🛡️ COMBAT INTEL",
-      value: "• **Verified rank scaling:** Champion vs Expert: **×15.3 damage dealt**, ÷15.3 received. " +
-        "Champion vs Master: **÷81 damage dealt**, ×81 received. These are examples, not F" + floor + " boss stats.\n" +
-        "• **Skill inspection:** Tap boss skill icons to check counter effects; players report they reveal otherwise hidden combat clues.\n" +
-        "• **Team:** Keep a frontline tank and support/healing; don't crowd the boss with only melee attackers.\n" +
-        "• **Next attempt:** Compare surviving turns, attack frequency and elemental attacks before changing damage builds."
+      value: "• Rank scaling strongly affects the damage dealt and received.\n" +
+        "• Inspect boss skill icons for counters and status effects.\n" +
+        "• Coordinate tanks, support, and damage for each attempt."
     }
   ];
 }
+
+function statBreakdownEmbed(floor) {
+  const boss = knownBoss(floor);
+  if (!boss) {
+    return new EmbedBuilder()
+      .setColor(0x4D5366)
+      .setTitle("📊 F" + floor + " — Monster Stats")
+      .setDescription("Exact stats are not verified for this floor. " +
+        "Browse **Guild Conquest** at " + ENEMIES_URL + " for the in-game enemy reference.");
+  }
+  const st = boss.stats;
+  return new EmbedBuilder()
+    .setColor(0x8176CE)
+    .setTitle("🕷️ F" + floor + " • " + boss.name + " — Full Monster Stats")
+    .setDescription("**Master rank • Level 346**\n" +
+      "Source: member-provided in-game Monster Stats screenshots.")
+    .addFields(
+      { name: "⚔️ Main stats", value:
+        "**ATK:** " + st.atk + "\n**DEF:** " + st.def +
+        "\n**HP:** " + st.hp + "\n**SPD:** " + st.spd },
+      { name: "🛡️ Defense / survival", value:
+        "**Resilience:** " + st.resilience +
+        "\n**Crit RES:** " + st.critResistance +
+        "\n**Block Rate:** " + st.blockRate +
+        "\n**Block Efficiency:** " + st.blockEfficiency +
+        "\n**DMG RES:** " + st.damageResistance +
+        "\n**Healing Boost:** " + st.healingBoost },
+      { name: "⚡ Offense / accuracy", value:
+        "**Crit Rate:** " + st.critRate +
+        "\n**Crit DMG:** " + st.critDamage +
+        "\n**Accuracy:** " + st.accuracy +
+        "\n**DMG Boost:** " + st.damageBoost +
+        "\n**Effect Hit Rate:** " + st.effectHitRate },
+      { name: "🧬 Resistances / mastery", value:
+        "**Effect RES:** " + st.effectResistance +
+        "\n**Elemental Mastery:** " + st.elementalMastery +
+        "\n**Elemental RES:** " + st.elementalResistance +
+        "\n**Physical Mastery:** " + st.physicalMastery +
+        "\n**Physical RES:** " + st.physicalResistance },
+      { name: "🌈 Elemental affinities", value: st.elementalAffinities },
+      { name: "🔰 Elemental aegis", value: st.elementalAegis },
+      { name: "🌀 Skill labels", value: boss.skillLabels.join(" • ") +
+        "\nExact effects aren't shown in the supplied screenshots." }
+    ).setFooter({ text: "Screenshot-confirmed F136 record • This does not update live boss HP." });
+}
+
 function fightStatus(floor) {
   if (floor === FIRST_KNOWN_FLOOR) {
-    return "**NOV 9 SCREENSHOT:** F136 • **52% HP** • **Daily Challenge Attempts 2/2** • " +
-      "a paw-icon reward shown. These are historical on-screen values, **not live boss HP or attempts**.";
+    return "**NOV 9 SCREENSHOT:** Spider Queen • F136 • **52% HP** • **Daily Challenge Attempts 2/2**. " +
+      "Historic on-screen values, **not live boss HP or attempts**.";
   }
   return "**HP:** Not connected to the game; inspect the current boss in Sword X Staff.";
 }
@@ -183,7 +315,9 @@ function mainEmbed(progress, source) {
   const floor = Number(progress.floor);
   return new EmbedBuilder()
     .setColor(0x8176CE)
-    .setTitle("⚔️ ASHEN WARRIORS | CONQUEST INTEL")
+    .setTitle(knownBoss(floor)
+      ? "🕷️ ASHEN | F" + floor + " • " + knownBoss(floor).name
+      : "⚔️ ASHEN WARRIORS | CONQUEST INTEL")
     .setDescription(
       "### CURRENT TARGET — FLOOR " + floor + "\n\n" +
       progressBar(floor) + "\n\n" +
@@ -193,9 +327,11 @@ function mainEmbed(progress, source) {
     )
     .addFields(...bossFields(floor))
     .setFooter({
-      text: "Source: Purrwikimania • " +
-        (source?.healthy ? "website reachable" : "website not confirmed") +
-        " • Game data is not connected"
+      text: knownBoss(floor)
+        ? "Boss details: in-game screenshots • Live game data not connected"
+        : "Source: Purrwikimania • " +
+          (source?.healthy ? "website reachable" : "website not confirmed") +
+          " • Game data is not connected"
     })
     .setTimestamp(progress.updated_at ? new Date(progress.updated_at) : new Date());
 }
@@ -204,9 +340,13 @@ function nextEmbed(floor, source) {
     .setColor(0x4D5366)
     .setTitle("📖 UPCOMING CONQUEST | F" + (floor + 1) + "–F" + (floor + 5))
     .setDescription(
-      Array.from({ length: 5 }, (_, index) =>
-        "**Floor " + (floor + index + 1) + "** — boss/level not verified"
-      ).join("\n") + "\n\n" +
+      Array.from({ length: 5 }, (_, index) => {
+        const f = floor + index + 1;
+        const boss = knownBoss(f);
+        return "**Floor " + f + "** — " + (boss
+          ? boss.name + " • Lv. " + boss.level + " • " + boss.rank
+          : "boss/level not verified");
+      }).join("\n") + "\n\n" +
       "🔎 **Boss names, exact levels, skills and resistances:** " + ENEMIES_URL +
       "\n\n**Automated source check:** " + sourceLabel(source) + "\n" +
       "*The floor numbers advance with your guild's Boss Down confirmations.*"
@@ -222,7 +362,8 @@ function rows() {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("cintel_next").setLabel("Next Boss").setEmoji("⏭️").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("cintel_lookup").setLabel("Find Floor").setEmoji("🔎").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("cintel_set_floor").setLabel("Correct Floor").setEmoji("🧭").setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId("cintel_set_floor").setLabel("Correct Floor").setEmoji("🧭").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("cintel_stats").setLabel("Detailed Stats").setEmoji("📊").setStyle(ButtonStyle.Secondary)
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(ENEMIES_URL).setLabel("Enemy Database").setEmoji("📚"),
@@ -399,6 +540,15 @@ export async function handleConquestIntelInteraction(interaction, { client, pool
   });
 
   if (interaction.isButton()) {
+    if (id === "cintel_stats") {
+      const current = await getProgress();
+      await interaction.reply({
+        embeds: [statBreakdownEmbed(Number(current.floor))],
+        flags: MessageFlags.Ephemeral,
+        allowedMentions: { parse: [] }
+      });
+      return true;
+    }
     if (id === "cintel_current" || id === "cintel_reference") {
       const current = await getProgress();
       await showFloor(interaction, Number(current.floor));
