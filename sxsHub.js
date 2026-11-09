@@ -597,7 +597,8 @@ function payloadHash(payload) {
 
 async function findBoardMessage(channel, botUserId) {
   const pins = await channel.messages.fetchPins().catch(() => null);
-  const pinned = pins?.find(message => message.author.id === botUserId && message.embeds?.length);
+  const pinnedItems = pins?.items ?? pins;
+  const pinned = pinnedItems?.find?.(message => message.author.id === botUserId && message.embeds?.length);
   if (pinned) return pinned;
 
   const recent = await channel.messages.fetch({ limit: 25 }).catch(() => null);
