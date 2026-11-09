@@ -3764,463 +3764,48 @@ function startScheduler() {
 }
 
 // =====================================================
-// EMERGENCY CATEGORY RECOVERY
+// MANUAL SIDEBAR OWNERSHIP — READ ONLY
 // =====================================================
-
-async function recoverAshenMainCategories(guildOverride = null) {
-  const guild = await resolveAshenGuild(guildOverride);
-  const report = { recreated: [], moved: [], failed: [] };
-
-  if (!guild) {
-    report.failed.push("Ashen Warriors guild unavailable");
-    return report;
-  }
-
-  await guild.channels.fetch().catch(() => {});
-
-  const categoryById = id => {
-    const channel = guild.channels.cache.get(id);
-    return channel?.type === ChannelType.GuildCategory ? channel : null;
-  };
-
-  const categoryByName = needles =>
-    guild.channels.cache.find(channel => {
-      if (channel.type !== ChannelType.GuildCategory) return false;
-      const name = channel.name.toUpperCase();
-      return needles.some(needle => name.includes(needle.toUpperCase()));
-    }) || null;
-
-  const createCategory = async name => {
-    try {
-      const category = await guild.channels.create({
-        name,
-        type: ChannelType.GuildCategory,
-        reason: "Recover accidentally deleted Ashen category"
-      });
-
-      report.recreated.push(name);
-      console.log(`🛟 Recreated category ${name}`);
-      return category;
-    } catch (error) {
-      report.failed.push(`Could not recreate ${name}: ${error.message}`);
-      return null;
-    }
-  };
-
-  const moveKnownChannel = async (channel, category) => {
-    if (!channel || !category) return;
-
-    if (channel.parentId === category.id) return;
-
-    try {
-      await channel.setParent(category.id, {
-        lockPermissions: false,
-        reason: "Recover channel after deleted Ashen category"
-      });
-      report.moved.push(channel.name);
-    } catch (error) {
-      report.failed.push(
-        `Could not restore ${channel.name} to ${category.name}: ${error.message}`
-      );
-    }
-  };
-
-  const byId = id => guild.channels.cache.get(id) || null;
-
-  // WELCOME
-  let welcome =
-    categoryById(WELCOME_CATEGORY_ID) ||
-    categoryByName(["WELCOME TO ASHEN", "ASHEN | ENTRY"]);
-
-  if (!welcome) {
-    welcome = await createCategory("ASHEN | ENTRY");
-  }
-
-  if (welcome) {
-    WELCOME_CATEGORY_ID = welcome.id;
-
-    for (const id of [
-      CHANNELS.START_HERE,
-      CHANNELS.RULES,
-      CHANNELS.ONBOARDING,
-      CHANNELS.HELP,
-      CHANNELS.STAFF_REQUESTS,
-      CHANNELS.INTRODUCTIONS,
-      CHANNELS.PREFERENCES
-    ]) {
-      await moveKnownChannel(byId(id), welcome);
-    }
-
-    const guildMembers = guild.channels.cache.find(
-      ch =>
-        ch.isTextBased?.() &&
-        (ch.name.includes("ashen-showcase") || ch.name.includes("ashen-members") || ch.name.includes("guild-members"))
-    ) || null;
-
-    await moveKnownChannel(guildMembers, welcome);
-  }
-
-  // ASHEN INFO
-  let info =
-    categoryById(IMPORTANT_CATEGORY_ID) ||
-    categoryByName(["ASHEN INFO", "ASHEN | COMMAND"]);
-
-  if (!info) {
-    info = await createCategory("ASHEN | COMMAND");
-  }
-
-  if (info) {
-    IMPORTANT_CATEGORY_ID = info.id;
-
-    for (const id of [
-      CHANNELS.REMINDERS,
-      CHANNELS.HIGHLIGHTS,
-      CHANNELS.EVENT_BOARD
-    ]) {
-      await moveKnownChannel(byId(id), info);
-    }
-
-    for (const channel of guild.channels.cache.values()) {
-      if (!channel.isTextBased?.()) continue;
-      const name = channel.name.toLowerCase();
-
-      if (
-        name.includes("admin-announcements") ||
-        name.includes("ashen-announcements") ||
-        name.includes("game-announcements") ||
-        name.includes("sxs-announcements")
-      ) {
-        await moveKnownChannel(channel, info);
-      }
-    }
-  }
-
-  // SWORD X STAFF
-  let sxs = categoryByName(["SWORD X STAFF", "SWORD X", "SXS"]);
-
-  if (!sxs) {
-    sxs = await createCategory("SWORD X STAFF | OPERATIONS");
-  }
-
-  if (sxs) {
-    for (const language of Object.values(LANGUAGE_CHANNELS)) {
-      await moveKnownChannel(byId(language.channel), sxs);
-    }
-
-    await moveKnownChannel(byId("1507566115994472568"), sxs);
-    await moveKnownChannel(byId("1538251460351889599"), sxs);
-
-    const sxsEventBoard = guild.channels.cache.find(
-      ch =>
-        ch.isTextBased?.() &&
-        ch.name.includes("sxs-event-board")
-    ) || null;
-
-    await moveKnownChannel(sxsEventBoard, sxs);
-  }
-
-  // ASHEN SOCIAL
-  let social =
-    categoryById(SOCIAL_CATEGORY_ID) ||
-    categoryByName(["ASHEN SOCIAL", "ASHEN | COMMONS"]);
-
-  if (!social) {
-    social = await createCategory("ASHEN | COMMONS");
-  }
-
-  if (social) {
-    SOCIAL_CATEGORY_ID = social.id;
-
-    for (const id of SOCIAL_CHANNELS) {
-      await moveKnownChannel(byId(id), social);
-    }
-  }
-
-  // ASHEN VOICE
-  let voice = categoryByName(["ASHEN VOICE", "VOICE CALLS", "ASHEN | VOICE"]);
-
-  if (!voice) {
-    voice = await createCategory("ASHEN | VOICE");
-  }
-
-  if (voice) {
-    for (const channel of guild.channels.cache.values()) {
-      if (channel.type !== ChannelType.GuildVoice) continue;
-
-      const name = channel.name.toLowerCase();
-
-      if (
-        name === "general" ||
-        name.includes("gaming") || name.includes("squad") ||
-        name.includes("boss grinds") || name.includes("boss runs") ||
-        name.includes("admins") || name.includes("command")
-      ) {
-        await moveKnownChannel(channel, voice);
-      }
-    }
-  }
-
-  if (report.recreated.length || report.moved.length) {
-    console.log(
-      `🛟 Recovery complete: ${report.recreated.length} categories recreated, ${report.moved.length} channels restored.`
-    );
-  }
-
-  return report;
-}
-
-// =====================================================
-// ASHEN SIDEBAR ORGANIZATION — PRESERVE CHANNEL IDS / ACLS
-// =====================================================
-// Run on startup so newly-created SxS information channels are kept in Intel.
-// No channel deletion, no role changes, no message deletion.
-async function organizeAshenSidebar(guildOverride = null) {
+// Staff control all channel/category names and layout. Vestra never
+// creates, renames, moves, or deletes sidebar channels on startup.
+// Keep category IDs current for reaction translations and channel checks.
+async function refreshAshenSidebarReferences(guildOverride = null) {
   const guild = await resolveAshenGuild(guildOverride);
   if (!guild) return;
   await guild.channels.fetch();
 
-  const definitions = [
-    { name: "✧ ASHEN | WELCOME", existing: ["ASHEN | ENTRY", "ASHEN | WELCOME"], channels: [
-      "start-here", "announcements", "server-guide", "onboarding", "introductions", "vestra-settings"
-    ] },
-    { name: "◇ ASHEN | COMMONS", existing: ["ASHEN | COMMONS"], channels: [
-      "general", "media", "memes", "movies-and-shows", "other-games",
-      "food", "music", "rando-topics", "travel"
-    ] },
-    { name: "✦ SWORD X STAFF | GUILD", existing: ["SWORD X STAFF | OPERATIONS", "SWORD X STAFF | GUILD"], channels: [
-      "sxs-event-board", "war-board", "guild-pings", "sxs-media",
-      "general-en", "general-es", "general-fr", "general-de", "general-pt", "general-ja"
-    ] },
-    { name: "✧ SWORD X STAFF | INTEL", existing: ["SWORD X STAFF | INTEL"], channels: [
-      "seasonal-info", "sxs-roadmap", "weekly-rotation", "ingredient-maps",
-      "spare-ingredients", "gift-codes", "builds-and-guides", "sxs-database", "updates-and-news"
-    ] },
-    { name: "◇ ASHEN | COMMUNITY", existing: ["ASHEN | COMMUNITY"], channels: [
-      "highlights", "community-highlights", "suggestions", "help-and-requests"
-    ] },
-    { name: "⚔ ASHEN | COMMAND", existing: ["ASHEN | COMMAND", "ASHEN INFO"], channels: [
-      "staff-chat", "staff-announcements", "staff-requests",
-      "guild-members", "guild-ping-log", "bot-logs"
-    ] },
-    { name: "⌁ ASHEN | VOICE", existing: ["ASHEN | VOICE"], channels: [] }
-  ];
+  const key = value => String(value || "")
+    .normalize("NFKC").toUpperCase().replace(/[^A-Z0-9]+/g, "");
+  const category = names => guild.channels.cache.find(ch =>
+    ch.type === ChannelType.GuildCategory &&
+    names.some(name => key(ch.name).includes(key(name)))
+  );
 
-  const norm = n => String(n || "").normalize("NFKC").toUpperCase().replace(/^[^A-Z0-9]+/, "").replace(/[^A-Z0-9]+/g, "");
-  const categoryFor = new Map();
-  const errors = [];
-  const attempt = async (label, fn) => { try { return await fn(); } catch (e) { errors.push(`${label}: ${e.message}`); console.error(`❌ Sidebar ${label}:`, e.message); return null; } };
-  const duplicates = [];
-  for (const def of definitions) {
-    let category = guild.channels.cache.find(ch =>
-      ch.type === ChannelType.GuildCategory &&
-      ([def.name, ...def.existing].some(n => norm(n) === norm(ch.name)))
+  const welcome = category(["ASHEN | WELCOME", "ASHEN | ENTRY", "WELCOME TO ASHEN"]);
+  const command = category(["ASHEN | COMMAND", "ASHEN INFO"]);
+  const commons = category(["ASHEN | COMMONS", "ASHEN SOCIAL"]);
+  if (welcome) WELCOME_CATEGORY_ID = welcome.id;
+  if (command) IMPORTANT_CATEGORY_ID = command.id;
+  if (commons) SOCIAL_CATEGORY_ID = commons.id;
+
+  // Diagnose duplicate names without changing any channels. Channel IDs
+  // and message history must be reviewed by staff before safe removal.
+  for (const logicalName of ["guild-pings", "staff-chat"]) {
+    const matches = [...guild.channels.cache.values()].filter(ch =>
+      ch.type === ChannelType.GuildText &&
+      key(ch.name).endsWith(key(logicalName))
     );
-    if (!category) {
-      category = await attempt(`create ${def.name}`, () => guild.channels.create({
-        name: def.name,
-        type: ChannelType.GuildCategory,
-        reason: "Approved Ashen Warriors sidebar organization"
-      }));
-    } else if (category.name !== def.name) {
-      await attempt(`rename ${category.name}`, () => category.setName(def.name, "Approved Ashen Warriors sidebar organization"));
-    }
-    if (!category) continue;
-    categoryFor.set(def.name, category);
-    for (const other of guild.channels.cache.values()) {
-      if (other.type === ChannelType.GuildCategory && other.id !== category.id &&
-          [def.name, ...def.existing].some(n => norm(n) === norm(other.name))) {
-        duplicates.push({ other, target: category });
-      }
-    }
-  }
-
-  const entry = categoryFor.get("✧ ASHEN | WELCOME");
-  const command = categoryFor.get("⚔ ASHEN | COMMAND");
-  const guildCategory = categoryFor.get("✦ SWORD X STAFF | GUILD");
-  const intel = categoryFor.get("✧ SWORD X STAFF | INTEL");
-  const commons = categoryFor.get("◇ ASHEN | COMMONS");
-  const voice = categoryFor.get("⌁ ASHEN | VOICE");
-
-  // Keep existing category-ID references used by translation and onboarding.
-  if (!entry || !command || !guildCategory || !intel || !commons || !voice) {
-    console.error("❌ Sidebar missing categories; cannot safely finish migration.");
-    return;
-  }
-  WELCOME_CATEGORY_ID = entry.id;
-  IMPORTANT_CATEGORY_ID = command.id;
-  SOCIAL_CATEGORY_ID = commons.id;
-
-  const byName = (name, type = ChannelType.GuildText) =>
-    guild.channels.cache.find(ch => ch.type === type && (
-      ch.name === name || (type === ChannelType.GuildText &&
-        norm(ch.name).endsWith(norm(name)) &&
-        (ch.name.includes(" · ") || ch.name.includes("•") || ch.name.includes("・")))
-    ));
-
-  // Map Vestra's legacy channel names onto the original Ashen layout.
-  // IDs are used wherever Vestra already has a hard dependency so renaming
-  // never disconnects onboarding, settings, alerts, requests, or highlights.
-  const renameById = [
-    [CHANNELS.START_HERE, "start-here"],
-    [CHANNELS.RULES, "server-guide"],
-    [CHANNELS.ONBOARDING, "onboarding"],
-    [CHANNELS.HELP, "help-and-requests"],
-    [CHANNELS.INTRODUCTIONS, "introductions"],
-    [CHANNELS.PREFERENCES, "vestra-settings"],
-    [CHANNELS.STAFF_REQUESTS, "staff-requests"],
-    [CHANNELS.REMINDERS, "guild-ping-log"],
-    [CHANNELS.HIGHLIGHTS, "highlights"],
-    [CHANNELS.EVENT_BOARD, "sxs-event-board"]
-  ];
-  for (const [id, targetName] of renameById) {
-    const channel = guild.channels.cache.get(id);
-    if (channel?.type === ChannelType.GuildText && channel.name !== targetName) {
-      await attempt(`rename #${channel.name} → #${targetName}`,
-        () => channel.setName(targetName, "Match approved Ashen layout"));
-    }
-  }
-
-  const renameLegacy = async (legacyName, targetName) => {
-    if (byName(targetName)) return byName(targetName);
-    const legacy = byName(legacyName);
-    if (!legacy) return null;
-    await attempt(`rename #${legacy.name} → #${targetName}`,
-      () => legacy.setName(targetName, "Match approved Ashen layout"));
-    return legacy;
-  };
-  await renameLegacy("ashen-showcase", "community-highlights");
-  await renameLegacy("sxs-announcements", "guild-pings");
-  await renameLegacy("sxs-resources", "spare-ingredients");
-  await renameLegacy("ashen-announcements", "staff-announcements");
-  await renameLegacy("movies-shows", "movies-and-shows");
-  await renameLegacy("random-topics", "rando-topics");
-
-  // Create only channels that genuinely do not already have a legacy equivalent.
-  // New channels inherit the destination category permissions.
-  const ensureTextChannel = async (name, parent, topic) => {
-    let channel = byName(name);
-    if (!channel) {
-      channel = await attempt(`create #${name}`, () => guild.channels.create({
-        name,
-        type: ChannelType.GuildText,
-        parent: parent.id,
-        topic,
-        reason: "Add missing channel from approved Ashen layout"
-      }));
-      if (channel) {
-        await attempt(`sync #${name} permissions`, () => channel.lockPermissions());
-      }
-    }
-    return channel;
-  };
-
-  await ensureTextChannel(
-    "suggestions",
-    categoryFor.get("◇ ASHEN | COMMUNITY"),
-    "Share suggestions and ideas for Ashen Warriors. Keep feedback constructive and specific."
-  );
-  await ensureTextChannel(
-    "staff-chat",
-    categoryFor.get("⚔ ASHEN | COMMAND"),
-    "Private Ashen staff discussion and coordination."
-  );
-  await ensureTextChannel(
-    "guild-members",
-    categoryFor.get("⚔ ASHEN | COMMAND"),
-    "Private guild member directory maintained by Vestra."
-  );
-  await ensureTextChannel(
-    "bot-logs",
-    categoryFor.get("⚔ ASHEN | COMMAND"),
-    "Private Vestra operations and troubleshooting channel."
-  );
-  await ensureTextChannel(
-    "guild-pings",
-    categoryFor.get("✦ SWORD X STAFF | GUILD"),
-    "Sword x Staff guild alerts and time-sensitive event notices."
-  );
-
-  // Bring back the original Ashen visual markers only on high-priority channels.
-  const decoratedChannels = new Map([
-    ["start-here", "✦ · start-here"],
-    ["announcements", "✧ · announcements"],
-    ["onboarding", "✦ · onboarding"],
-    ["sxs-event-board", "◷ · sxs-event-board"],
-    ["war-board", "⚔ · war-board"],
-    ["guild-pings", "✦ · guild-pings"],
-    ["community-highlights", "✧ · community-highlights"],
-    ["staff-chat", "⚔ · staff-chat"],
-    ["staff-announcements", "✦ · staff-announcements"],
-    ["staff-requests", "✧ · staff-requests"],
-    ["guild-ping-log", "◷ · guild-ping-log"]
-  ]);
-
-  for (const [logicalName, displayName] of decoratedChannels) {
-    const channel = byName(logicalName);
-    if (channel && channel.name !== displayName) {
-      await attempt(`decorate #${logicalName}`, () =>
-        channel.setName(displayName, "Restore selective Ashen sidebar symbols")
+    if (matches.length > 1) {
+      console.warn(
+        "⚠️ Duplicate sidebar channels detected for " + logicalName + ": " +
+        matches.map(ch => ch.name + " (" + ch.id + ")").join(", ") +
+        ". No channels were renamed or deleted."
       );
     }
   }
-
-  // Move channels into the approved categories.
-  for (const def of definitions) {
-    const parent = categoryFor.get(def.name);
-    for (const name of def.channels) {
-      const channel = byName(name);
-      if (!channel) continue;
-      if (channel.parentId !== parent.id) {
-        await attempt(`move ${channel.name}`, () => channel.setParent(parent.id, {
-          lockPermissions: false,
-          reason: "Approved Ashen sidebar organization"
-        }));
-      }
-      if (def.name === "⚔ ASHEN | COMMAND") {
-        await attempt(`secure #${channel.name}`, () => channel.lockPermissions());
-      }
-    }
-  }
-
-  // Merge any duplicate categories without deleting channels or altering ACLs.
-  for (const { other, target } of duplicates) {
-    for (const channel of [...guild.channels.cache.values()].filter(ch => ch.parentId === other.id)) {
-      await attempt(`merge ${channel.name}`, () => channel.setParent(target.id, { lockPermissions: false, reason: "Merge duplicate Ashen category" }));
-    }
-    await guild.channels.fetch();
-    if (![...guild.channels.cache.values()].some(ch => ch.parentId === other.id)) {
-      await attempt(`delete empty ${other.name}`, () => other.delete("Remove empty duplicate category"));
-    }
-  }
-
-  // Preserve existing voice rooms and their permissions, including staff voice.
-  for (const name of ["General", "Squad", "Boss Runs", "Command", "Afk", "Other Games", "Social"]) {
-    const channel = byName(name, ChannelType.GuildVoice);
-    if (channel && channel.parentId !== voice.id) {
-      await attempt(`move voice ${channel.name}`, () => channel.setParent(voice.id, { lockPermissions: false }));
-    }
-  }
-
-  // Use bulk position editing to retain intended order within each category.
-  for (const def of definitions) {
-    const parent = categoryFor.get(def.name);
-    const channels = def.channels.map(name => byName(name)).filter(Boolean);
-    if (def.name === "⌁ ASHEN | VOICE") {
-      channels.push(...["General", "Squad", "Boss Runs", "Command", "Afk", "Other Games", "Social"]
-        .map(name => byName(name, ChannelType.GuildVoice)).filter(Boolean));
-    }
-    const ordered = channels.filter(ch => ch.parentId === parent.id);
-    if (ordered.length) await attempt(`order ${def.name}`, () => guild.channels.setPositions(ordered.map((ch, i) =>
-      ({ channel: ch.id, position: i })
-    )));
-  }
-  await attempt("order categories", () => guild.channels.setPositions(definitions.map((def, i) => ({
-    channel: categoryFor.get(def.name).id, position: i
-  }))));
-  console.log(`Ashen sidebar migration finished with ${errors.length} error(s).`);
-  if (errors.length) console.error("Sidebar errors:", errors.join(" | "));
 }
 
+// =====================================================
 // =====================================================
 // ASHEN PERMISSION MODEL
 // =====================================================
@@ -5812,8 +5397,8 @@ client.once(Events.ClientReady, async readyClient => {
 
   const ashenGuild = await resolveAshenGuild().catch(() => null);
 
-  await organizeAshenSidebar(ashenGuild).catch(error => {
-    console.error("⚠️ Ashen sidebar organization:", error.message);
+  await refreshAshenSidebarReferences(ashenGuild).catch(error => {
+    console.error("⚠️ Ashen sidebar read-only check:", error.message);
   });
 
   await applyAshenPermissions(ashenGuild).catch(error => {
