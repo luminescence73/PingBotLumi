@@ -3551,7 +3551,11 @@ async function organizeAshenSidebar(guildOverride = null) {
   SOCIAL_CATEGORY_ID = commons.id;
 
   const byName = (name, type = ChannelType.GuildText) =>
-    guild.channels.cache.find(ch => ch.type === type && ch.name === name);
+    guild.channels.cache.find(ch => ch.type === type && (
+      ch.name === name || (type === ChannelType.GuildText &&
+        norm(ch.name).endsWith(norm(name)) &&
+        (ch.name.includes(" · ") || ch.name.includes("•") || ch.name.includes("・")))
+    ));
 
   // Move only named existing channels; preserve per-channel overwrites.
   for (const def of definitions) {
