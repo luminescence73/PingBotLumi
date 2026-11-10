@@ -3596,7 +3596,7 @@ async function sendScopedRolePing(channel, helperRole, text) {
   }
 }
 
-async function sendLocalizedRoleNotification(roleId, englishText, label) {
+async function sendLocalizedRoleNotification(roleId, englishText, label, options = {}) {
   const guild = getGuild();
   if (!guild) return 0;
   await guild.members.fetch();
@@ -3605,6 +3605,7 @@ async function sendLocalizedRoleNotification(roleId, englishText, label) {
   if (!subscriptionRole) {
     console.error("Notification role missing: " + roleId);
     await sendMasterLog(roleId, label, englishText, 0).catch(console.error);
+    await recordStaffPingAudit({kind:"failure",title:label,detail:"Subscription role missing: "+roleId,failed:1}).catch(console.error);
     return 0;
   }
 
@@ -3617,6 +3618,8 @@ async function sendLocalizedRoleNotification(roleId, englishText, label) {
   }
 
   const deliveries = [];
+  const unreachable = [], translationFallbacks = [], successfulLanguages = [];
+  let failed = 0;
   const reachableByLanguage = new Map();
   for (const [key, recipients] of byLanguage) {
     if (!recipients.length) continue;
@@ -3625,13 +3628,19 @@ async function sendLocalizedRoleNotification(roleId, englishText, label) {
     const channel = await client.channels.fetch(info.channel).catch(() => null);
     if (!channel?.isTextBased()) {
       console.error("Missing " + info.name + " General channel for " + label);
+      failed += recipients.length;
+      unreachable.push(info.name+" General missing ("+recipients.length+" subscribers)");
       continue;
     }
 
     const reachable = [];
     for (const member of recipients) {
       if (await ensureLanguageAccess(member, key)) reachable.push(member);
-      else console.warn(label + ": " + member.id + " cannot view " + info.name + " General");
+      else {
+        failed++;
+        unreachable.push(info.name+" channel access unavailable for "+member.id);
+        console.warn(label + ": " + member.id + " cannot view " + info.name + " General");
+      }
     }
     if (!reachable.length) continue;
 
@@ -3653,6 +3662,7 @@ async function sendLocalizedRoleNotification(roleId, englishText, label) {
     }
   } catch (error) {
     rolesReady = false;
+    unreachable.push("Scoped role sync failed: "+error.message);
     console.error("Failed to synchronize preferred-language notification roles:", error);
   }
 
@@ -3663,6 +3673,7 @@ async function sendLocalizedRoleNotification(roleId, englishText, label) {
       try {
         localized = await googleTranslate(englishText, info.code, "en");
       } catch (error) {
+        translationFallbacks.push(info.name);
         console.error("Notification translation fallback (" + key + "):", error.message);
       }
     }
@@ -3671,13 +3682,18 @@ async function sendLocalizedRoleNotification(roleId, englishText, label) {
       if (rolesReady) {
         await sendScopedRolePing(channel, scopedRoles.get(key), localized);
         delivered += reachable.length;
+        successfulLanguages.push(info.name);
       } else {
         await channel.send({
           content: localized,
           allowedMentions: { parse: [], users: [], roles: [] }
         });
+        failed += reachable.length;
+        unreachable.push(info.name+" posted without alerts (scoped roles unavailable)");
       }
     } catch (error) {
+      failed += reachable.length;
+      unreachable.push(info.name+" delivery failed: "+error.message);
       console.error("Role ping failed (" + label + " / " + key + "):", error);
       // A role permission error must not accidentally ping the global
       // subscription role or expose a long list of member mentions.
@@ -3691,6 +3707,20 @@ async function sendLocalizedRoleNotification(roleId, englishText, label) {
   // retry (and double notify) when the log channel is unavailable.
   await sendMasterLog(roleId, label, englishText, delivered)
     .catch(error => console.error("Notification archive failed:", error));
+  await recordStaffPingAudit({
+    kind:"delivery", title:label, actorId:options.actorId || null,
+    detail: [
+      "Subscriptions: "+subscribers.size,
+      unreachable.length ? "Issues: "+unreachable.join("; ").slice(0,1000) : "No delivery issues detected.",
+      translationFallbacks.length ? "Translation fallback to English: "+translationFallbacks.join(", ") : ""
+    ].filter(Boolean).join("\n"),
+    delivered, failed:failed+translationFallbacks.length, languages:successfulLanguages
+  }).catch(error => console.error("Staff ping audit failed:", error));
+  if (options.actorId) {
+    await recordStaffPingAudit({kind:"manual",title:label,
+      detail:"Authorized staff manually initiated this notification.",
+      actorId:options.actorId,delivered}).catch(console.error);
+  }
   return delivered;
 }
 
@@ -3740,7 +3770,7 @@ async function startTournamentEvent(tournamentKey, announcementText, label) {
   await updateEventBoard();
 }
 
-async function startTournamentVote(tournamentKey, round, pingMembers = true) {
+async function startTournamentVote(tournamentKey, round, pingMembers = true, actorId = null) {
   const tournament = TOURNAMENTS[tournamentKey];
   const parts = chicagoParts();
   const ends = new Date(Date.now() + tournament.voteMinutes * 60 * 1000);
@@ -3750,7 +3780,8 @@ async function startTournamentVote(tournamentKey, round, pingMembers = true) {
     await sendLocalizedRoleNotification(
       tournament.role,
       `🗳️ ${tournament.name} Round ${round} voting is OPEN! You have ${tournament.voteMinutes} minutes to vote.`,
-      `${tournament.name} — Round ${round} Voting Open`
+      `${tournament.name} — Round ${round} Voting Open`,
+      {actorId}
     );
   }
 
@@ -4117,6 +4148,9 @@ async function checkSchedule() {
         await processScheduledEvent(event, now);
       } catch (error) {
         console.error(`❌ Scheduled event error (${event.key}):`, error);
+        await recordStaffPingAudit({kind:"failure",title:event.label,
+          detail:"Scheduled event failed: "+error.message,
+          eventKey:dateKey(now)+":"+event.key}).catch(console.error);
       }
     }
 
@@ -4966,6 +5000,30 @@ async function reactionRole(reaction, user, adding) {
     } else await member.roles.remove(item.role);
   }
 }
+
+
+// Staff-only audit of event role subscriptions from onboarding, settings and staff.
+client.on(Events.GuildMemberUpdate, (previous, current) => {
+  if (!current?.guild || current.user?.bot) return;
+  const monitored = [...Object.values(REMINDERS), ...Object.values(TOURNAMENTS)];
+  const added = [], removed = [];
+  for (const item of monitored) {
+    const before = previous.roles.cache.has(item.role);
+    const after = current.roles.cache.has(item.role);
+    if (before === after) continue;
+    (after ? added : removed).push(item.name);
+  }
+  if (!added.length && !removed.length) return;
+  const lines = [
+    "Member: <@" + current.id + ">",
+    added.length ? "Enabled: " + added.join(", ") : "",
+    removed.length ? "Disabled: " + removed.join(", ") : ""
+  ].filter(Boolean);
+  void recordStaffPingAudit({
+    kind:"subscription", title:"Guild ping preferences changed",
+    detail:lines.join("\n")
+  }).catch(error => console.error("Staff subscription audit:", error));
+});
 
 // =====================================================
 // MESSAGE EVENTS
@@ -5857,6 +5915,9 @@ client.on(Events.InteractionCreate, async interaction => {
         [claimKey]
       );
       if (!claimed.rowCount) {
+        await recordStaffPingAudit({kind:"duplicate",title:selected+" Conquest second run",
+          eventKey:claimKey,actorId:interaction.user.id,
+          detail:"Repeated second-run request blocked; this alert was already triggered today."}).catch(console.error);
         return interaction.editReply(
           (selected === "morning" ? "Morning" : "Night") +
           " Conquest second-run alert was already triggered today."
@@ -5870,7 +5931,8 @@ client.on(Events.InteractionCreate, async interaction => {
 
       try {
         const recipients = await sendLocalizedRoleNotification(
-          REMINDERS[selected].role, text, title + " — Second Run"
+          REMINDERS[selected].role, text, title + " — Second Run",
+          {actorId:interaction.user.id}
         );
         return interaction.editReply(
           title + " second-run alert sent. " +
@@ -5895,7 +5957,7 @@ client.on(Events.InteractionCreate, async interaction => {
       if (!state || state.phase !== "battle") return interaction.reply({ content: "❌ There isn't a battle waiting for the next vote right now.", flags: MessageFlags.Ephemeral });
       const tournament = TOURNAMENTS[state.tournament];
       if (state.round >= tournament.rounds) return interaction.reply({ content: "Round 4 is already complete. Use Finish Tournament after the final battle.", flags: MessageFlags.Ephemeral });
-      await startTournamentVote(state.tournament, state.round + 1, true);
+      await startTournamentVote(state.tournament, state.round + 1, true, interaction.user.id);
       return interaction.reply({ content: `✅ Round ${state.round + 1} voting opened.`, flags: MessageFlags.Ephemeral });
     }
 
