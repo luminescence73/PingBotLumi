@@ -163,6 +163,23 @@ async function initDatabase() {
       PRIMARY KEY (source_role_id, language_key)
     )`,
 
+    `CREATE TABLE IF NOT EXISTS guild_ping_staff_audit (
+      id BIGSERIAL PRIMARY KEY,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      detail TEXT NOT NULL DEFAULT '',
+      event_key TEXT,
+      actor_id TEXT,
+      delivered_count INTEGER NOT NULL DEFAULT 0,
+      failed_count INTEGER NOT NULL DEFAULT 0,
+      languages JSONB NOT NULL DEFAULT '[]'::jsonb
+    )`,
+
+    `CREATE UNIQUE INDEX IF NOT EXISTS guild_ping_staff_audit_once
+      ON guild_ping_staff_audit(kind, event_key)
+      WHERE event_key IS NOT NULL`,
+
     `CREATE TABLE IF NOT EXISTS guild_ping_member_mirrors (
       source_message_id TEXT PRIMARY KEY,
       member_channel_id TEXT NOT NULL,
@@ -1277,19 +1294,23 @@ Change your event subscriptions in <#${CHANNELS.PREFERENCES}>.`;
 }
 
 async function setupGuildPingsPanel() {
-  const content = `# ASHEN / GUILD PING LOG
-This channel records guild and tournament alerts sent by Vestra.
-
-**DELIVERY**
-Your actual notifications appear in your selected language's General channel.
-
-**ARCHIVE**
-These records do not send extra role pings. Manage subscriptions in <#${CHANNELS.PREFERENCES}>.`;
-
+  const content = [
+    "# ASHEN / STAFF GUILD PING LOG",
+    "**Private staff operations feed.**",
+    "",
+    "Public event archives continue in the member Guild Pings channel without extra mentions.",
+    "",
+    "**STAFF OPERATIONS**",
+    "Vestra tracks successful localized deliveries, failures, translation fallbacks,",
+    "blocked duplicate requests, manual actions, subscription changes, and missed reminders.",
+    "",
+    "The pinned staff monitoring panel updates automatically. No diagnostics or",
+    "private staff activity are mirrored into the member-facing feed."
+  ].join("\n");
   await upsertBotPanel(
     CHANNELS.REMINDERS, "panel_guild_pings",
     { content, embeds: [], components: [] },
-    "# ASHEN / GUILD PING LOG"
+    "# ASHEN / STAFF GUILD PING LOG"
   );
 }
 
@@ -3076,6 +3097,8 @@ function formatAlertHistoryMessage(roleId, label, text, deliveredCount) {
 
 async function mirrorStaffGuildPingRecord(sourceMessage) {
   if (!sourceMessage?.id || sourceMessage.author?.id !== client.user.id) return false;
+  // The member archive only receives recognizable event announcements.
+  if (!isGuildPingAlertRecord(sourceMessage.content)) return false;
   const memberChannel = await getMemberGuildPingsChannel();
   if (!memberChannel) {
     console.warn("⚠️ Member guild-pings channel not found; staff alert record preserved.");
@@ -3107,6 +3130,187 @@ async function mirrorStaffGuildPingRecord(sourceMessage) {
     // Do not retry an ambiguous Discord send, which could double-post.
     console.error("❌ Could not mirror guild ping record:", error);
     return false;
+  }
+}
+
+
+// =====================================================
+// STAFF-ONLY GUILD PING MONITORING
+// Never use the member mirror for staff records or panels.
+// =====================================================
+const STAFF_PING_DASHBOARD_TAG = "# VESTRA / STAFF PING CONTROL";
+
+async function getPrivateStaffPingChannel() {
+  const guild = getGuild();
+  const channel = await client.channels.fetch(CHANNELS.REMINDERS).catch(() => null);
+  if (!guild || !channel?.isTextBased?.()) return null;
+  const publicChannel = await getMemberGuildPingsChannel().catch(() => null);
+  if (channel.id === publicChannel?.id) {
+    console.error("Staff ping monitor: member channel collision. Private monitoring disabled.");
+    return null;
+  }
+  const onboarded = guild.roles.cache.get(ONBOARDING_COMPLETE);
+  if (!onboarded ||
+      channel.permissionsFor(guild.roles.everyone)?.has(PermissionFlagsBits.ViewChannel) ||
+      channel.permissionsFor(onboarded)?.has(PermissionFlagsBits.ViewChannel)) {
+    console.error("Staff ping monitor: guild ping log is not private. Monitoring disabled.");
+    return null;
+  }
+  return channel;
+}
+
+async function recordStaffPingAudit({
+  kind, title, detail = "", eventKey = null, actorId = null,
+  delivered = 0, failed = 0, languages = []
+}) {
+  const result = await pool.query(
+    "INSERT INTO guild_ping_staff_audit " +
+    "(kind,title,detail,event_key,actor_id,delivered_count,failed_count,languages) " +
+    "VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) " +
+    "ON CONFLICT DO NOTHING RETURNING id",
+    [kind,title,detail,eventKey,actorId,delivered,failed,JSON.stringify(languages)]
+  );
+  if (!result.rowCount) return false;
+
+  const channel = await getPrivateStaffPingChannel();
+  if (channel) {
+    const lines = [
+      "🛡️ **STAFF PING AUDIT · " + kind.toUpperCase() + "**",
+      "**" + title + "**",
+      detail,
+      kind === "delivery" ? "**Members notified:** " + delivered + " · **Failures:** " + failed : "",
+      languages.length ? "**Languages:** " + languages.join(", ") : "",
+      actorId ? "**Triggered by:** <@" + actorId + ">" : ""
+    ].filter(Boolean);
+    await channel.send({
+      content: lines.join("\n").slice(0,1900),
+      allowedMentions: { parse: [], roles: [], users: [], repliedUser: false }
+    }).catch(error => console.error("Staff ping audit delivery:", error.message));
+  }
+  return true;
+}
+
+async function staffPingDailyNumbers(day) {
+  const result = await pool.query(
+    "SELECT COUNT(*) FILTER (WHERE kind='delivery')::int AS sent, " +
+    "COALESCE(SUM(delivered_count) FILTER (WHERE kind='delivery'),0)::int AS delivered, " +
+    "COALESCE(SUM(failed_count) FILTER (WHERE kind='delivery'),0)::int AS failed, " +
+    "COUNT(*) FILTER (WHERE kind='duplicate')::int AS duplicates, " +
+    "COUNT(*) FILTER (WHERE kind='missed')::int AS missed, " +
+    "COUNT(*) FILTER (WHERE kind='subscription')::int AS subscriptions " +
+    "FROM guild_ping_staff_audit " +
+    "WHERE (recorded_at AT TIME ZONE 'America/Chicago')::date = $1::date",
+    [day]
+  );
+  return result.rows[0];
+}
+
+let staffDashboardUpdating = false;
+async function updateStaffPingDashboard() {
+  if (staffDashboardUpdating) return;
+  staffDashboardUpdating = true;
+  try {
+    const channel = await getPrivateStaffPingChannel();
+    if (!channel) return;
+    const today = dateKey(chicagoParts());
+    const stats = await staffPingDailyNumbers(today);
+    const latest = await pool.query(
+      "SELECT kind,title,recorded_at FROM guild_ping_staff_audit ORDER BY id DESC LIMIT 3"
+    );
+    const next = upcomingEvents(3).map(event =>
+      "• " + eventDayLabel(event) + " " + format12Hour(event.hour,event.minute) +
+      " — " + event.label
+    ).join("\n") || "No scheduled alerts.";
+    const recent = latest.rows.map(row =>
+      "• " + row.kind + ": " + row.title +
+      " · <t:" + Math.floor(new Date(row.recorded_at).getTime()/1000) + ":t>"
+    ).join("\n") || "No activity recorded yet.";
+    const content = [
+      STAFF_PING_DASHBOARD_TAG,
+      "",
+      "**STAFF ONLY — this panel and its diagnostics are never copied to member Guild Pings.**",
+      "",
+      "**TODAY · " + today + " (Central)**",
+      "✅ Event announcements: **" + stats.sent + "**",
+      "🌐 Members notified: **" + stats.delivered + "**",
+      "⚠️ Failed deliveries: **" + stats.failed + "**",
+      "🛡️ Duplicate requests blocked: **" + stats.duplicates + "**",
+      "🚨 Missed scheduled alerts: **" + stats.missed + "**",
+      "🔔 Subscription changes: **" + stats.subscriptions + "**",
+      "",
+      "**NEXT SCHEDULED**",
+      next,
+      "",
+      "**RECENT STAFF ACTIVITY**",
+      recent,
+      "",
+      "Uncertain/failed sends are never automatically retried (prevents duplicate pings)."
+    ].join("\n");
+    const panel = await upsertBotPanel(
+      channel, "panel_staff_ping_monitor",
+      {
+        content, embeds: [],
+        allowedMentions: { parse: [], users: [], roles: [] },
+        components: [new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId("staff_ping_refresh")
+            .setLabel("Refresh Staff Monitor").setStyle(ButtonStyle.Secondary)
+        )]
+      },
+      STAFF_PING_DASHBOARD_TAG
+    );
+    if (panel && !panel.pinned) {
+      await panel.pin().catch(error => console.warn("Staff monitor pin:", error.message));
+    }
+  } finally {
+    staffDashboardUpdating = false;
+  }
+}
+
+let staffAuditSweepRunning = false;
+async function auditMissedScheduledPings() {
+  if (staffAuditSweepRunning) return;
+  staffAuditSweepRunning = true;
+  try {
+    const now = chicagoParts(), today = dateKey(now);
+    const nowMinutes = now.hour*60 + now.minute;
+    for (const event of SCHEDULED_EVENTS) {
+      if (!eventApplies(event,now.year,now.month,now.day,now.weekday)) continue;
+      const [hour,minute] = eventTimeForDate(event,now.year,now.month,now.day);
+      if (nowMinutes <= hour*60+minute+3) continue;
+      const eventKey = today + ":" + event.key;
+      if (await wasEventSent(eventKey)) continue;
+      await recordStaffPingAudit({
+        kind: "missed", title: event.label, eventKey,
+        detail: "Scheduled " + format12Hour(hour,minute) +
+          " Central; no successful schedule record. Review before any manual retry."
+      });
+    }
+  } finally {
+    staffAuditSweepRunning = false;
+  }
+}
+
+let staffSummaryRunning = false;
+async function maybeSendStaffDailyPingSummary() {
+  if (staffSummaryRunning) return;
+  staffSummaryRunning = true;
+  try {
+    const now = chicagoParts();
+    if (now.hour === 0 && now.minute < 5) return;
+    const d = new Date(Date.UTC(now.year,now.month-1,now.day-1,12));
+    const yesterday = d.getUTCFullYear() + "-" +
+      String(d.getUTCMonth()+1).padStart(2,"0") + "-" +
+      String(d.getUTCDate()).padStart(2,"0");
+    const stats = await staffPingDailyNumbers(yesterday);
+    await recordStaffPingAudit({
+      kind:"daily", title:yesterday+" Guild Ping Summary",
+      eventKey:yesterday+":daily_summary",
+      detail:"Events: "+stats.sent+" · Members notified: "+stats.delivered+
+        " · Failures: "+stats.failed+" · Duplicates stopped: "+stats.duplicates+
+        " · Missed schedules: "+stats.missed+" · Subscription changes: "+stats.subscriptions
+    });
+  } finally {
+    staffSummaryRunning = false;
   }
 }
 
@@ -3930,6 +4134,11 @@ function startScheduler() {
   void checkSchedule();
   setInterval(() => void checkSchedule(), 20_000);
   setInterval(() => void updateEventBoard(), 60_000);
+  setInterval(() => void updateStaffPingDashboard().catch(console.error), 60_000);
+  setInterval(() => void auditMissedScheduledPings().catch(console.error), 60_000);
+  setInterval(() => void maybeSendStaffDailyPingSummary().catch(console.error), 60_000);
+  void auditMissedScheduledPings().catch(console.error);
+  void maybeSendStaffDailyPingSummary().catch(console.error);
 }
 
 // =====================================================
@@ -4876,6 +5085,17 @@ client.on(Events.InteractionCreate, async interaction => {
   try {
     if (await handleConquestIntelInteraction(interaction, { client, pool, isStaff })) return;
 
+    if (interaction.isButton() && interaction.customId === "staff_ping_refresh") {
+      const member = interaction.guild ? await interaction.guild.members.fetch(interaction.user.id) : null;
+      if (!isStaff(member)) return interaction.reply({ content:"Staff-only control.", flags:MessageFlags.Ephemeral });
+      if (interaction.channelId !== CHANNELS.REMINDERS || !await getPrivateStaffPingChannel()) {
+        return interaction.reply({ content:"Staff monitor channel privacy cannot be verified.", flags:MessageFlags.Ephemeral });
+      }
+      await interaction.deferReply({ flags:MessageFlags.Ephemeral });
+      await updateStaffPingDashboard();
+      return interaction.editReply("✅ Staff monitor refreshed. Member Guild Pings were not changed.");
+    }
+
     // Old persistent buttons can survive prior deployments. Do not rename.
     if (interaction.isButton() && interaction.customId === "admin_apply_theme") {
       return interaction.reply({
@@ -5761,6 +5981,7 @@ client.once(Events.ClientReady, async readyClient => {
     ["Bot Logs", setupBotLogsPanel],
     ["Member Guild Pings", setupMemberGuildPingsPanel],
     ["Guild Ping Log", setupGuildPingsPanel],
+    ["Staff Ping Monitor", updateStaffPingDashboard],
     ["Live Event Board", setupEventBoard],
     ["Conquest Intel", () => setupConquestIntel({ client, pool, guild: ashenGuild })],
     ["Sword x Staff Live Hub", () => setupSxsHub({
