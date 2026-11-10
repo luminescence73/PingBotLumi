@@ -3194,7 +3194,8 @@ async function staffPingDailyNumbers(day) {
   const result = await pool.query(
     "SELECT COUNT(*) FILTER (WHERE kind='delivery')::int AS sent, " +
     "COALESCE(SUM(delivered_count) FILTER (WHERE kind='delivery'),0)::int AS delivered, " +
-    "COALESCE(SUM(failed_count) FILTER (WHERE kind='delivery'),0)::int AS failed, " +
+    "(COALESCE(SUM(failed_count) FILTER (WHERE kind='delivery'),0) + " +
+    "COUNT(*) FILTER (WHERE kind='failure'))::int AS failed, " +
     "COUNT(*) FILTER (WHERE kind='duplicate')::int AS duplicates, " +
     "COUNT(*) FILTER (WHERE kind='missed')::int AS missed, " +
     "COUNT(*) FILTER (WHERE kind='subscription')::int AS subscriptions " +
@@ -3233,7 +3234,7 @@ async function updateStaffPingDashboard() {
       "**TODAY · " + today + " (Central)**",
       "✅ Event announcements: **" + stats.sent + "**",
       "🌐 Members notified: **" + stats.delivered + "**",
-      "⚠️ Failed deliveries: **" + stats.failed + "**",
+      "⚠️ Delivery / translation issues: **" + stats.failed + "**",
       "🛡️ Duplicate requests blocked: **" + stats.duplicates + "**",
       "🚨 Missed scheduled alerts: **" + stats.missed + "**",
       "🔔 Subscription changes: **" + stats.subscriptions + "**",
