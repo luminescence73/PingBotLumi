@@ -3443,6 +3443,37 @@ async function maybeSendStaffDailyPingSummary() {
   }
 }
 
+// One-time cleanup of the old verbose Night Conquest staff entry.
+// Edit only Vestra's own matching message; do not repost or touch member logs.
+async function cleanOldNightConquestStaffEntry() {
+  const stateKey = "cleanup_night_conquest_second_run_staff_2026_11_10";
+  if ((await dbGetState(stateKey))?.completed) return;
+  const channel = await getPrivateStaffPingChannel();
+  if (!channel?.messages) return;
+  let before;
+  let edited = 0;
+  for (let page = 0; page < 5; page++) {
+    const batch = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
+    if (!batch.size) break;
+    for (const msg of batch.values()) {
+      if (msg.author?.id !== client.user.id) continue;
+      if (!msg.content.includes("Night Conquest — Second Run")) continue;
+      if (!msg.content.includes("STAFF PING AUDIT · DELIVERY") ||
+          !msg.content.includes("STAFF PING AUDIT · MANUAL")) continue;
+      await msg.edit({
+        content: "🔔 **Night Conquest — Second Run**\nSecond run notification sent.",
+        allowedMentions: { parse: [] }
+      });
+      edited++;
+      break;
+    }
+    if (edited) break;
+    before = batch.last()?.id;
+  }
+  if (edited) await dbSetState(stateKey, { completed: true, edited });
+  else console.warn("Night Conquest cleanup: matching historical staff entry not found; no changes made.");
+}
+
 async function sendMasterLog(roleId, label, text, deliveredCount) {
   // Archive successful event announcements once, in the member history only.
   // Do not duplicate the entire announcement in the private staff log.
@@ -6199,6 +6230,9 @@ client.once(Events.ClientReady, async readyClient => {
 
   startScheduler();
   startTranslationHealthMonitor();
+  void cleanOldNightConquestStaffEntry().catch(error =>
+    console.error("❌ Old Night Conquest staff log cleanup:", error)
+  );
 
   // Safe one-time migrations of Vestra's older generated messages.
   void migrateLegacyIntroductions().catch(error => {
