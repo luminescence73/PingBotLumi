@@ -3297,15 +3297,18 @@ async function recordStaffPingAudit({
   );
   if (!result.rowCount) return false;
 
+  // Keep routine success/manual activity in the audit database and dashboard.
+  // Only actionable problems should post into the private staff channel.
+  const actionable = kind === "failure" || kind === "missed" ||
+    kind === "duplicate" || (kind === "delivery" && failed > 0);
+  if (!actionable) return true;
   const channel = await getPrivateStaffPingChannel();
   if (channel) {
     const lines = [
-      "🛡️ **STAFF PING AUDIT · " + kind.toUpperCase() + "**",
+      "⚠️ **GUILD PING ISSUE**",
       "**" + title + "**",
       detail,
-      kind === "delivery" ? "**Members notified:** " + delivered + " · **Failures:** " + failed : "",
-      languages.length ? "**Languages:** " + languages.join(", ") : "",
-      actorId ? "**Triggered by:** <@" + actorId + ">" : ""
+      failed ? "**Failures:** " + failed : ""
     ].filter(Boolean);
     await channel.send({
       content: lines.join("\n").slice(0,1900),
@@ -3441,17 +3444,17 @@ async function maybeSendStaffDailyPingSummary() {
 }
 
 async function sendMasterLog(roleId, label, text, deliveredCount) {
-  const channel = await client.channels.fetch(CHANNELS.REMINDERS).catch(() => null);
-  if (!channel?.isTextBased()) throw new Error("#guild-ping-log is unavailable");
-
-  // Staff log is private; member copy contains the same event data without pings.
-  const staffLog = await channel.send({
+  // Archive successful event announcements once, in the member history only.
+  // Do not duplicate the entire announcement in the private staff log.
+  const channel = await getMemberGuildPingsChannel();
+  if (!channel?.isTextBased()) {
+    console.warn("⚠️ Member guild-pings archive unavailable:", label);
+    return;
+  }
+  await channel.send({
     content: formatAlertHistoryMessage(roleId, label, text, deliveredCount),
     allowedMentions: { parse: [], roles: [], users: [], repliedUser: false }
   });
-  await mirrorStaffGuildPingRecord(staffLog).catch(error =>
-    console.error("❌ Member guild-pings mirror:", error)
-  );
 }
 
 // Bring over recent existing event records once, with no mentions.
