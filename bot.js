@@ -3446,32 +3446,48 @@ async function maybeSendStaffDailyPingSummary() {
 // One-time cleanup of the old verbose Night Conquest staff entry.
 // Edit only Vestra's own matching message; do not repost or touch member logs.
 async function cleanOldNightConquestStaffEntry() {
-  const stateKey = "cleanup_night_conquest_second_run_staff_2026_11_10";
+  const stateKey = "cleanup_night_conquest_second_run_staff_2026_11_10_v2";
   if ((await dbGetState(stateKey))?.completed) return;
-  const channel = await getPrivateStaffPingChannel();
-  if (!channel?.messages) return;
+  // Use the known staff-log channel and confirm it is private before editing.
+  const channel = await client.channels.fetch(CHANNELS.REMINDERS).catch(() => null);
+  const guild = getGuild();
+  if (!guild || !channel?.isTextBased?.()) {
+    console.warn("Night Conquest cleanup: staff log unavailable.");
+    return;
+  }
+  const everyone = channel.permissionsFor(guild.roles.everyone);
+  const onboarded = channel.permissionsFor(ONBOARDING_COMPLETE);
+  if (everyone?.has(PermissionFlagsBits.ViewChannel) || onboarded?.has(PermissionFlagsBits.ViewChannel)) {
+    console.error("Night Conquest cleanup: channel not confirmed private; aborting.");
+    return;
+  }
   let before;
   let edited = 0;
-  for (let page = 0; page < 5; page++) {
+  let scanned = 0;
+  for (let page = 0; page < 10; page++) {
     const batch = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
     if (!batch.size) break;
     for (const msg of batch.values()) {
+      scanned++;
       if (msg.author?.id !== client.user.id) continue;
-      if (!msg.content.includes("Night Conquest — Second Run")) continue;
-      if (!msg.content.includes("STAFF PING AUDIT · DELIVERY") ||
-          !msg.content.includes("STAFF PING AUDIT · MANUAL")) continue;
+      const content = msg.content || "";
+      if (!/Night Conquest\\s*[—–-]\\s*Second Run/i.test(content)) continue;
+      // Target only the verbose staff records, not short unrelated messages.
+      if (!/STAFF PING AUDIT|Subscriptions:\\s*15|Vestra delivered 15 localized/i.test(content)) continue;
       await msg.edit({
-        content: "🔔 **Night Conquest — Second Run**\nSecond run notification sent.",
+        content: "🔔 **Night Conquest — Second Run**\\nSecond run notification sent.".replace("\\n", "\n"),
         allowedMentions: { parse: [] }
       });
       edited++;
-      break;
     }
-    if (edited) break;
     before = batch.last()?.id;
   }
-  if (edited) await dbSetState(stateKey, { completed: true, edited });
-  else console.warn("Night Conquest cleanup: matching historical staff entry not found; no changes made.");
+  if (edited) {
+    await dbSetState(stateKey, { completed: true, edited });
+    console.log(`✅ Cleaned ${edited} old Night Conquest staff message(s), scanned ${scanned}.`);
+  } else {
+    console.warn(`⚠️ Night Conquest cleanup: no matching staff message in ${scanned} scanned messages.`);
+  }
 }
 
 async function sendMasterLog(roleId, label, text, deliveredCount) {
