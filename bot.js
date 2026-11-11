@@ -2302,7 +2302,8 @@ async function updateSingleChoiceRole(member, group, selectedKey) {
 const translationWebhooks = new Map();
 const destinationChains = new Map(LANGUAGE_KEYS.map(key => [key, Promise.resolve()]));
 
-async function getTranslationWebhook(channel) {
+async function getTranslationWebhook(channel, refresh = false) {
+  if (refresh) translationWebhooks.delete(channel.id);
   if (translationWebhooks.has(channel.id)) return translationWebhooks.get(channel.id);
   const webhooks = await channel.fetchWebhooks();
   let webhook = webhooks.find(hook => hook.owner?.id === client.user.id && hook.name === "Vestra Translator");
@@ -2311,10 +2312,39 @@ async function getTranslationWebhook(channel) {
   return webhook;
 }
 
+function isInvalidTranslationWebhook(error) {
+  return [10015, 50027].includes(Number(error?.code)) ||
+    [401, 404].includes(Number(error?.status)) && /webhook/i.test(String(error?.message || ""));
+}
+
+function isRetryableTranslationError(error) {
+  const status = Number(error?.status);
+  const message = String(error?.message || "");
+  return isInvalidTranslationWebhook(error) ||
+    status === 429 || status >= 500 ||
+    /Google Translation HTTP (429|5\\d\\d)/.test(message) ||
+    /fetch failed|ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN|timeout/i.test(message);
+}
+
+const translationRetryDelay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 function queueDestination(languageKey, task) {
   const previous = destinationChains.get(languageKey) || Promise.resolve();
-  const next = previous.then(task).catch(error => {
-    console.error(`❌ ${languageKey} translation queue:`, error.message);
+  const next = previous.then(async () => {
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        return await task();
+      } catch (error) {
+        console.error(`❌ ${languageKey} translation attempt ${attempt}/4:`, error);
+        if (attempt === 4 || !isRetryableTranslationError(error)) {
+          console.error(`🚨 Translation delivery failed for ${languageKey}; check Railway logs.`);
+          return;
+        }
+        await translationRetryDelay(Math.min(1000 * 2 ** (attempt - 1), 8000));
+      }
+    }
+  }).catch(error => {
+    console.error(`❌ ${languageKey} translation queue unexpected error:`, error);
   });
   destinationChains.set(languageKey, next);
   return next;
@@ -2393,10 +2423,13 @@ async function createTranslatedCopy(message, groupId, sourceKey, targetKey, repl
   let base = [replyHeader.trimEnd(), translated, attachments].filter(Boolean).join("\n");
   base = limitText(base, 1850);
 
-  const webhook = await getTranslationWebhook(targetChannel);
+  // A previous attempt may have delivered the message before a database error.
+  // Never send a second copy when a mapping already exists.
+  if (await getTargetCopy(groupId, targetKey)) return;
+
   const mentions = getMentionIds(message.content || "");
   const summary = await reactionSummary(groupId);
-  const sent = await webhook.send({
+  const payload = {
     content: `${base}${summary}`,
     username: `${safeDisplayName(message.member, message.author)} • ${sourceInfo.emoji}`,
     avatarURL: message.author.displayAvatarURL({ extension: "png", size: 256 }),
@@ -2405,7 +2438,16 @@ async function createTranslatedCopy(message, groupId, sourceKey, targetKey, repl
       users: mentions.users,
       roles: mentions.roles
     }
-  });
+  };
+  let webhook = await getTranslationWebhook(targetChannel);
+  let sent;
+  try {
+    sent = await webhook.send(payload);
+  } catch (error) {
+    if (!isInvalidTranslationWebhook(error)) throw error;
+    webhook = await getTranslationWebhook(targetChannel, true);
+    sent = await webhook.send(payload);
+  }
 
   await pool.query(
     `INSERT INTO translation_messages(message_id, group_id, channel_id, language_key, is_source, base_content, webhook_id)
