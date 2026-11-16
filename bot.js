@@ -5275,33 +5275,44 @@ async function scanKeywordHistory() {
     if (!guild) return;
     await guild.channels.fetch();
     const channels = [...guild.channels.cache.values()].filter(ch => keywordAlertAllowedChannel(ch, guild));
-    console.log(`🔎 Keyword history starting: ${channels.length} eligible channels in ${guild.name}.`);
+    console.log(`🔎 Keyword history scan running across ${channels.length} eligible channels.`);
     let sent = 0;
     let remaining = 0;
+    let scanned = 0;
+    // Continue scanning each channel until its oldest accessible message is reached.
+    // Discord.js handles REST rate limits; pause briefly between pages to avoid bursts.
     for (const channel of channels) {
       const key = "keyword_history_v2_" + channel.id;
-      const state = await dbGetState(key) || {};
+      let state = await dbGetState(key) || {};
       if (state.done) continue;
       remaining++;
-      const batch = await channel.messages.fetch({ limit: 100, ...(state.before ? { before: state.before } : {}) });
-      if (!batch.size) {
-        await dbSetState(key, { done: true });
-        remaining--;
-        continue;
-      }
-      for (const message of batch.values()) {
-        if (sent >= 10) break;
-        if (await sendKeywordAlert(message, true)) sent++;
-        // Persist the oldest processed message, not the newest in the batch.
-        await dbSetState(key, { before: message.id });
-      }
-      if (sent >= 10) break;
-      if (batch.size < 100) {
-        await dbSetState(key, { done: true });
-        remaining--;
+      let pages = 0;
+      while (pages < 30) {
+        const batch = await channel.messages.fetch({ limit: 100, ...(state.before ? { before: state.before } : {}) });
+        if (!batch.size) {
+          await dbSetState(key, { done: true });
+          remaining--;
+          break;
+        }
+        const messages = [...batch.values()].sort((a, b) => BigInt(a.id) > BigInt(b.id) ? -1 : 1);
+        for (const message of messages) {
+          if (await sendKeywordAlert(message, true)) sent++;
+          scanned++;
+          state = { before: message.id };
+          // Save progress periodically and after each page, not on every message.
+          if (scanned % 100 === 0) await dbSetState(key, state);
+        }
+        await dbSetState(key, state);
+        pages++;
+        if (batch.size < 100) {
+          await dbSetState(key, { done: true });
+          remaining--;
+          break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 350));
       }
     }
-    console.log(`🔎 Keyword history scan: ${channels.length} accessible channels, ${sent} DMs this pass, ${remaining} channels remaining.`);
+    console.log(`🔎 Keyword history progress: ${scanned} messages checked, ${sent} DMs sent, ${remaining} channels remaining.`);
     if (!remaining) {
       keywordHistoryFinished = true;
       console.log("✅ Ashen keyword history scan complete.");
@@ -5325,7 +5336,7 @@ function startKeywordHistoryScan() {
       }
     })();
     void scanKeywordHistory();
-    setInterval(() => void scanKeywordHistory(), 2 * 60 * 1000);
+    setInterval(() => void scanKeywordHistory(), 30 * 1000);
   }, 90 * 1000);
 }
 
