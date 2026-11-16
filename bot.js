@@ -5233,10 +5233,10 @@ function keywordAlertAllowedChannel(channel, guild) {
 }
 
 async function sendKeywordAlert(message, historical = false) {
-  if (!message?.guild || message.guild.id !== ASHEN_WARRIORS || !message.author ||
-      message.author.bot || message.webhookId || !message.content) return false;
+  if (!message?.author || message.author.bot || message.webhookId || !message.content) return false;
+  if ((message.guildId || message.guild?.id || message.channel?.guildId) !== ASHEN_WARRIORS) return false;
   const matches = keywordAlertMatches(message.content);
-  if (matches.length && !keywordAlertAllowedChannel(message.channel, message.guild)) {
+  if (matches.length && !keywordAlertAllowedChannel(message.channel, message.guild || message.channel.guild)) {
     console.warn("⚠️ Keyword match skipped by channel permissions:", message.channel.id, message.channel.name);
     return false;
   }
@@ -5312,10 +5312,13 @@ async function scanKeywordHistory() {
     let sent = 0;
     let remaining = 0;
     let scanned = 0;
+    let readable = 0;
+    let matched = 0;
+    let human = 0;
     // Continue scanning each channel until its oldest accessible message is reached.
     // Discord.js handles REST rate limits; pause briefly between pages to avoid bursts.
     for (const channel of channels) {
-      const key = "keyword_history_v4_" + channel.id;
+      const key = "keyword_history_v5_" + channel.id;
       let state = await dbGetState(key) || {};
       if (state.done) continue;
       remaining++;
@@ -5330,8 +5333,13 @@ async function scanKeywordHistory() {
         }
         const messages = [...batch.values()].sort((a, b) => BigInt(a.id) > BigInt(b.id) ? -1 : 1);
         for (const message of messages) {
-          if (await sendKeywordAlert(message, true)) sent++;
           scanned++;
+          if (!message.author?.bot && !message.webhookId) {
+            human++;
+            if (message.content?.length) readable++;
+            if (keywordAlertMatches(message.content).length) matched++;
+          }
+          if (await sendKeywordAlert(message, true)) sent++;
           state = { before: message.id };
           // Save progress periodically and after each page, not on every message.
           if (scanned % 100 === 0) await dbSetState(key, state);
@@ -5349,7 +5357,7 @@ async function scanKeywordHistory() {
         console.error("❌ Keyword channel scan failed:", channel.id, error.message);
       }
     }
-    console.log(`🔎 Keyword history progress: ${scanned} messages checked, ${sent} DMs sent, ${remaining} channels remaining.`);
+    console.log(`🔎 Keyword history progress: ${scanned} checked, ${human} human, ${readable} readable, ${matched} keyword matches, ${sent} DMs sent, ${remaining} channels remaining.`);
     if (!remaining) {
       keywordHistoryFinished = true;
       console.log("✅ Ashen keyword history scan complete.");
@@ -5384,6 +5392,9 @@ function startKeywordHistoryScan() {
 client.on(Events.MessageCreate, async message => {
   try {
     if (!message.guild || message.author.bot || message.webhookId) return;
+    if (keywordAlertMatches(message.content).length) {
+      console.log("🔎 Live keyword detected:", message.channelId, message.id);
+    }
     void sendKeywordAlert(message).catch(error => console.error("❌ Keyword monitor:", error));
 
     if (await ensureAshenMembersDiscussion(message)) {
