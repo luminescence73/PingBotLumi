@@ -5239,7 +5239,8 @@ function keywordAlertAllowedChannel(channel, guild) {
 
 async function sendKeywordAlert(message, historical = false) {
   if (!message?.author || message.author.bot || message.webhookId || !message.content) return false;
-  if ((message.guildId || message.guild?.id || message.channel?.guildId) !== ASHEN_WARRIORS) return false;
+  const ashenGuild = getGuild();
+  if (!ashenGuild || (message.guildId || message.guild?.id || message.channel?.guildId) !== ashenGuild.id) return false;
   const matches = keywordAlertMatches(message.content);
   if (!matches.length) return false;
   const reserved = await pool.query(
@@ -5257,7 +5258,7 @@ async function sendKeywordAlert(message, historical = false) {
         "**From:** " + message.author.username,
         "**Channel:** <#" + message.channel.id + ">",
         "**Message:** " + excerpt,
-        "**Jump directly to message:** " + (message.url || "https://discord.com/channels/" + ASHEN_WARRIORS + "/" + message.channelId + "/" + message.id)
+        "**Jump directly to message:** " + (message.url || "https://discord.com/channels/" + ashenGuild.id + "/" + message.channelId + "/" + message.id)
       ].join("\n"),
       allowedMentions: { parse: [] }
     });
