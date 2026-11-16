@@ -5211,13 +5211,13 @@ client.on(Events.GuildMemberUpdate, (previous, current) => {
 // =====================================================
 const KEYWORD_ALERT_OWNER_ID = "1291637835107012682";
 const KEYWORD_ALERT_TERMS = ["black knights", "blacknights", "help", "kal", "krayt", "rex", "pia", "sus"];
-const KEYWORD_ALERT_PATTERN = /(?<![a-z0-9])(?:black\\s+knights|blacknights|help|kal|krayt|rex|pia|sus)(?![a-z0-9])/gi;
+const KEYWORD_ALERT_PATTERN = /(?<![a-z0-9])(?:black\s+knights|blacknights|help|kal|krayt|rex|pia|sus)(?![a-z0-9])/gi;
 let keywordHistoryRunning = false;
 let keywordHistoryFinished = false;
 
 function keywordAlertMatches(content) {
   const matches = [...String(content || "").matchAll(KEYWORD_ALERT_PATTERN)]
-    .map(match => match[0].toLowerCase().replace(/\\s+/g, " "));
+    .map(match => match[0].toLowerCase().replace(/\s+/g, " "));
   return [...new Set(matches)];
 }
 
@@ -5255,6 +5255,7 @@ async function sendKeywordAlert(message, historical = false) {
       ].join("\\n").replace(/\\n/g, "\n"),
       allowedMentions: { parse: [] }
     });
+    console.log("✅ Keyword DM sent:", historical ? "history" : "live", message.id, matches.join(", "));
     return true;
   } catch (error) {
     await pool.query("DELETE FROM keyword_alert_deliveries WHERE message_id = $1", [message.id]).catch(() => {});
@@ -5296,6 +5297,7 @@ async function scanKeywordHistory() {
         remaining--;
       }
     }
+    console.log(`🔎 Keyword history scan: ${channels.length} accessible channels, ${sent} DMs this pass, ${remaining} channels remaining.`);
     if (!remaining) {
       keywordHistoryFinished = true;
       console.log("✅ Ashen keyword history scan complete.");
