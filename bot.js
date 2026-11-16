@@ -125,6 +125,11 @@ async function initDatabase() {
       PRIMARY KEY(message_id, user_id, emoji_key)
     )`,
 
+    `CREATE TABLE IF NOT EXISTS keyword_alert_deliveries (
+      message_id TEXT PRIMARY KEY,
+      sent_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+
     `CREATE TABLE IF NOT EXISTS social_companions (
       original_message_id TEXT PRIMARY KEY,
       channel_id TEXT NOT NULL,
@@ -5202,12 +5207,121 @@ client.on(Events.GuildMemberUpdate, (previous, current) => {
 });
 
 // =====================================================
+// OWNER KEYWORD ALERTS — ASHEN WARRIORS ONLY
+// =====================================================
+const KEYWORD_ALERT_OWNER_ID = "1291637835107012682";
+const KEYWORD_ALERT_TERMS = ["black knights", "blacknights", "help", "kal", "krayt", "rex", "pia", "sus"];
+const KEYWORD_ALERT_PATTERN = /(?<![a-z0-9])(?:black\\s+knights|blacknights|help|kal|krayt|rex|pia|sus)(?![a-z0-9])/gi;
+let keywordHistoryRunning = false;
+let keywordHistoryFinished = false;
+
+function keywordAlertMatches(content) {
+  const matches = [...String(content || "").matchAll(KEYWORD_ALERT_PATTERN)]
+    .map(match => match[0].toLowerCase().replace(/\\s+/g, " "));
+  return [...new Set(matches)];
+}
+
+function keywordAlertAllowedChannel(channel, guild) {
+  if (!channel || channel.type !== ChannelType.GuildText || channel.guildId !== guild.id) return false;
+  // Never collect private staff discussions or restricted channels.
+  const everyone = channel.permissionsFor(guild.roles.everyone);
+  const onboarded = channel.permissionsFor(ONBOARDING_COMPLETE);
+  return !!(everyone?.has(PermissionFlagsBits.ViewChannel) ||
+    onboarded?.has(PermissionFlagsBits.ViewChannel));
+}
+
+async function sendKeywordAlert(message, historical = false) {
+  if (!message?.guild || message.guild.id !== ASHEN_WARRIORS || !message.author ||
+      message.author.bot || message.webhookId || !message.content) return false;
+  if (!keywordAlertAllowedChannel(message.channel, message.guild)) return false;
+  const matches = keywordAlertMatches(message.content);
+  if (!matches.length) return false;
+  const reserved = await pool.query(
+    "INSERT INTO keyword_alert_deliveries(message_id) VALUES($1) ON CONFLICT DO NOTHING RETURNING message_id",
+    [message.id]
+  );
+  if (!reserved.rowCount) return false;
+  try {
+    const recipient = await client.users.fetch(KEYWORD_ALERT_OWNER_ID);
+    const excerpt = message.content.length > 1100 ? message.content.slice(0, 1100) + "…" : message.content;
+    await recipient.send({
+      content: [
+        historical ? "🔎 **Ashen keyword match · History**" : "🔎 **Ashen keyword match · New message**",
+        "**Matched:** " + matches.join(", "),
+        "**From:** " + message.author.username,
+        "**Channel:** <#" + message.channel.id + ">",
+        "**Message:**\\n" + excerpt,
+        "**Open:** " + message.url
+      ].join("\\n").replace(/\\n/g, "\n"),
+      allowedMentions: { parse: [] }
+    });
+    return true;
+  } catch (error) {
+    await pool.query("DELETE FROM keyword_alert_deliveries WHERE message_id = $1", [message.id]).catch(() => {});
+    console.error("❌ Owner keyword DM failed:", error);
+    return false;
+  }
+}
+
+async function scanKeywordHistory() {
+  if (keywordHistoryRunning || keywordHistoryFinished) return;
+  keywordHistoryRunning = true;
+  try {
+    const guild = getGuild();
+    if (!guild || guild.id !== ASHEN_WARRIORS) return;
+    await guild.channels.fetch();
+    const channels = [...guild.channels.cache.values()].filter(ch => keywordAlertAllowedChannel(ch, guild));
+    let sent = 0;
+    let remaining = 0;
+    for (const channel of channels) {
+      const key = "keyword_history_v1_" + channel.id;
+      const state = await dbGetState(key) || {};
+      if (state.done) continue;
+      remaining++;
+      const batch = await channel.messages.fetch({ limit: 100, ...(state.before ? { before: state.before } : {}) });
+      if (!batch.size) {
+        await dbSetState(key, { done: true });
+        remaining--;
+        continue;
+      }
+      for (const message of batch.values()) {
+        // Preserve progress on every match, even if the DM limit is reached.
+        if (sent >= 10) break;
+        if (await sendKeywordAlert(message, true)) sent++;
+        await dbSetState(key, { before: message.id });
+      }
+      if (sent >= 10) break;
+      if (batch.size < 100) {
+        await dbSetState(key, { done: true });
+        remaining--;
+      }
+    }
+    if (!remaining) {
+      keywordHistoryFinished = true;
+      console.log("✅ Ashen keyword history scan complete.");
+    }
+  } catch (error) {
+    console.error("❌ Ashen keyword history scan:", error);
+  } finally {
+    keywordHistoryRunning = false;
+  }
+}
+
+function startKeywordHistoryScan() {
+  setTimeout(() => {
+    void scanKeywordHistory();
+    setInterval(() => void scanKeywordHistory(), 2 * 60 * 1000);
+  }, 90 * 1000);
+}
+
+// =====================================================
 // MESSAGE EVENTS
 // =====================================================
 
 client.on(Events.MessageCreate, async message => {
   try {
     if (!message.guild || message.author.bot || message.webhookId) return;
+    void sendKeywordAlert(message).catch(error => console.error("❌ Keyword monitor:", error));
 
     if (await ensureAshenMembersDiscussion(message)) {
       return;
@@ -6246,6 +6360,7 @@ client.once(Events.ClientReady, async readyClient => {
 
   startScheduler();
   startTranslationHealthMonitor();
+  startKeywordHistoryScan();
   void cleanOldNightConquestStaffEntry().catch(error =>
     console.error("❌ Old Night Conquest staff log cleanup:", error)
   );
