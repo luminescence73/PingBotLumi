@@ -125,6 +125,11 @@ async function initDatabase() {
       PRIMARY KEY(message_id, user_id, emoji_key)
     )`,
 
+    `CREATE TABLE IF NOT EXISTS keyword_alert_deliveries_v2 (
+      message_id TEXT PRIMARY KEY,
+      sent_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+
     `CREATE TABLE IF NOT EXISTS keyword_alert_deliveries (
       message_id TEXT PRIMARY KEY,
       sent_at TIMESTAMPTZ DEFAULT NOW()
@@ -5236,13 +5241,9 @@ async function sendKeywordAlert(message, historical = false) {
   if (!message?.author || message.author.bot || message.webhookId || !message.content) return false;
   if ((message.guildId || message.guild?.id || message.channel?.guildId) !== ASHEN_WARRIORS) return false;
   const matches = keywordAlertMatches(message.content);
-  if (matches.length && !keywordAlertAllowedChannel(message.channel, message.guild || message.channel.guild)) {
-    console.warn("⚠️ Keyword match skipped by channel permissions:", message.channel.id, message.channel.name);
-    return false;
-  }
   if (!matches.length) return false;
   const reserved = await pool.query(
-    "INSERT INTO keyword_alert_deliveries(message_id) VALUES($1) ON CONFLICT DO NOTHING RETURNING message_id",
+    "INSERT INTO keyword_alert_deliveries_v2(message_id) VALUES($1) ON CONFLICT DO NOTHING RETURNING message_id",
     [message.id]
   );
   if (!reserved.rowCount) return false;
@@ -5255,15 +5256,15 @@ async function sendKeywordAlert(message, historical = false) {
         "**Matched:** " + matches.join(", "),
         "**From:** " + message.author.username,
         "**Channel:** <#" + message.channel.id + ">",
-        "**Message:**\\n" + excerpt,
-        "**Open:** " + message.url
-      ].join("\\n").replace(/\\n/g, "\n"),
+        "**Message:** " + excerpt,
+        "**Jump directly to message:** " + (message.url || "https://discord.com/channels/" + ASHEN_WARRIORS + "/" + message.channelId + "/" + message.id)
+      ].join("\n"),
       allowedMentions: { parse: [] }
     });
     console.log("✅ Keyword DM sent:", historical ? "history" : "live", message.id, matches.join(", "));
     return true;
   } catch (error) {
-    await pool.query("DELETE FROM keyword_alert_deliveries WHERE message_id = $1", [message.id]).catch(() => {});
+    await pool.query("DELETE FROM keyword_alert_deliveries_v2 WHERE message_id = $1", [message.id]).catch(() => {});
     console.error("❌ Owner keyword DM failed:", error);
     return false;
   }
@@ -5394,7 +5395,7 @@ function startKeywordHistoryScan() {
         else skipped++;
       }
       await owner.send({
-        content: "🔎 **Vestra keyword DM check**\\nChecked only the 100 most recent staff-chat messages (no server-wide scan). Matching messages: " + hits.length + ". New alerts sent: " + sent + ". Not delivered (including already-recorded IDs): " + skipped + ". Live monitoring remains enabled.",
+        content: "🔎 **Vestra keyword DM check**\nChecked only the 100 most recent staff-chat messages (no server-wide scan). Matching messages: " + hits.length + ". New alerts sent: " + sent + ". Not delivered (including already-recorded IDs): " + skipped + ". Live monitoring remains enabled.",
         allowedMentions: { parse: [] }
       });
       console.log("🔎 Targeted keyword DM check:", { checked: recent.size, matches: hits.length, sent, skipped });
