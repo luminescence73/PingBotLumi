@@ -5222,15 +5222,14 @@ function keywordAlertMatches(content) {
 }
 
 function keywordAlertAllowedChannel(channel, guild) {
-  if (!channel || channel.type !== ChannelType.GuildText || channel.guildId !== guild.id) return false;
-  // The owner explicitly requested keyword alerts from the private staff chat too.
-  // These alerts go only to KEYWORD_ALERT_OWNER_ID, never to member-facing channels.
-  if (channel.name === "staff-chat" || channel.id === "1569224389281583134") return true;
-  // Other channels are eligible when visible to regular or onboarded members.
-  const everyone = channel.permissionsFor(guild.roles.everyone);
-  const onboarded = channel.permissionsFor(ONBOARDING_COMPLETE);
-  return !!(everyone?.has(PermissionFlagsBits.ViewChannel) ||
-    onboarded?.has(PermissionFlagsBits.ViewChannel));
+  if (!channel || channel.guildId !== guild.id) return false;
+  const supported = [ChannelType.GuildText, ChannelType.GuildAnnouncement,
+    ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread];
+  if (!supported.includes(channel.type)) return false;
+  const me = guild.members.me;
+  const permissions = me && channel.permissionsFor(me);
+  return !!permissions?.has(PermissionFlagsBits.ViewChannel) &&
+    !!permissions?.has(PermissionFlagsBits.ReadMessageHistory);
 }
 
 async function sendKeywordAlert(message, historical = false) {
@@ -5277,19 +5276,51 @@ async function scanKeywordHistory() {
     const guild = getGuild();
     if (!guild) return;
     await guild.channels.fetch();
-    const channels = [...guild.channels.cache.values()].filter(ch => keywordAlertAllowedChannel(ch, guild));
-    console.log(`🔎 Keyword history scan running across ${channels.length} eligible channels.`);
+    const channelMap = new Map();
+    for (const channel of guild.channels.cache.values()) {
+      if (keywordAlertAllowedChannel(channel, guild)) channelMap.set(channel.id, channel);
+      if (!channel.threads || !keywordAlertAllowedChannel(channel, guild)) continue;
+      try {
+        const active = await channel.threads.fetchActive();
+        for (const thread of active.threads.values()) {
+          if (keywordAlertAllowedChannel(thread, guild)) channelMap.set(thread.id, thread);
+        }
+        for (const options of [{ type: "public" }, { type: "private" }]) {
+          let before;
+          for (let page = 0; page < 20; page++) {
+            try {
+              const result = await channel.threads.fetchArchived({ ...options, limit: 100, ...(before ? { before } : {}) });
+              for (const thread of result.threads.values()) {
+                if (keywordAlertAllowedChannel(thread, guild)) channelMap.set(thread.id, thread);
+              }
+              if (!result.hasMore || !result.threads.size) break;
+              const last = [...result.threads.values()].at(-1);
+              before = options.type === "public" ? last.archiveTimestamp : last.id;
+              if (!before) break;
+            } catch (error) {
+              console.warn("⚠️ Keyword archived thread fetch skipped:", channel.id, options.type, error.message);
+              break;
+            }
+          }
+        }
+      } catch (error) {
+        console.warn("⚠️ Keyword thread discovery skipped:", channel.id, error.message);
+      }
+    }
+    const channels = [...channelMap.values()];
+    console.log(`🔎 Keyword history scan running across ${channels.length} accessible channels and threads.`);
     let sent = 0;
     let remaining = 0;
     let scanned = 0;
     // Continue scanning each channel until its oldest accessible message is reached.
     // Discord.js handles REST rate limits; pause briefly between pages to avoid bursts.
     for (const channel of channels) {
-      const key = "keyword_history_v3_" + channel.id;
+      const key = "keyword_history_v4_" + channel.id;
       let state = await dbGetState(key) || {};
       if (state.done) continue;
       remaining++;
       let pages = 0;
+      try {
       while (pages < 30) {
         const batch = await channel.messages.fetch({ limit: 100, ...(state.before ? { before: state.before } : {}) });
         if (!batch.size) {
@@ -5313,6 +5344,9 @@ async function scanKeywordHistory() {
           break;
         }
         await new Promise(resolve => setTimeout(resolve, 350));
+      }
+      } catch (error) {
+        console.error("❌ Keyword channel scan failed:", channel.id, error.message);
       }
     }
     console.log(`🔎 Keyword history progress: ${scanned} messages checked, ${sent} DMs sent, ${remaining} channels remaining.`);
