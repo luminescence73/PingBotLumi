@@ -5275,7 +5275,7 @@ async function scanKeywordHistory() {
     let sent = 0;
     let remaining = 0;
     for (const channel of channels) {
-      const key = "keyword_history_v1_" + channel.id;
+      const key = "keyword_history_v2_" + channel.id;
       const state = await dbGetState(key) || {};
       if (state.done) continue;
       remaining++;
