@@ -5223,7 +5223,10 @@ function keywordAlertMatches(content) {
 
 function keywordAlertAllowedChannel(channel, guild) {
   if (!channel || channel.type !== ChannelType.GuildText || channel.guildId !== guild.id) return false;
-  // Never collect private staff discussions or restricted channels.
+  // The owner explicitly requested keyword alerts from the private staff chat too.
+  // These alerts go only to KEYWORD_ALERT_OWNER_ID, never to member-facing channels.
+  if (channel.name === "staff-chat" || channel.id === "1569224389281583134") return true;
+  // Other channels are eligible when visible to regular or onboarded members.
   const everyone = channel.permissionsFor(guild.roles.everyone);
   const onboarded = channel.permissionsFor(ONBOARDING_COMPLETE);
   return !!(everyone?.has(PermissionFlagsBits.ViewChannel) ||
@@ -5282,7 +5285,7 @@ async function scanKeywordHistory() {
     // Continue scanning each channel until its oldest accessible message is reached.
     // Discord.js handles REST rate limits; pause briefly between pages to avoid bursts.
     for (const channel of channels) {
-      const key = "keyword_history_v2_" + channel.id;
+      const key = "keyword_history_v3_" + channel.id;
       let state = await dbGetState(key) || {};
       if (state.done) continue;
       remaining++;
