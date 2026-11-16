@@ -5319,7 +5319,7 @@ async function scanKeywordHistory() {
     // Continue scanning each channel until its oldest accessible message is reached.
     // Discord.js handles REST rate limits; pause briefly between pages to avoid bursts.
     for (const channel of channels) {
-      const key = "keyword_history_v5_" + channel.id;
+      const key = "keyword_history_v6_replay_" + channel.id;
       let state = await dbGetState(key) || {};
       if (state.done) continue;
       remaining++;
@@ -5375,73 +5375,17 @@ function startKeywordHistoryScan() {
     void (async () => {
       try {
         const owner = await client.users.fetch(KEYWORD_ALERT_OWNER_ID);
-        await owner.send({ content: "🔎 **Vestra keyword monitor online**\nLive alerts are enabled. Recent messages across all accessible channels and threads will be checked. Keywords: " + KEYWORD_ALERT_TERMS.join(", "), allowedMentions: { parse: [] } });
+        await owner.send({ content: "🔎 **Vestra keyword monitor online**\nLive alerts are enabled. Replaying historical matches as individual clickable DMs across all accessible channels and threads. Keywords: " + KEYWORD_ALERT_TERMS.join(", "), allowedMentions: { parse: [] } });
         console.log("✅ Keyword monitor startup DM delivered.");
       } catch (error) {
         console.error("❌ Keyword monitor startup DM FAILED:", error);
       }
     })();
-    // One recent-message pass across ALL accessible Ashen channels and threads.
-    // Do not restart the full historical scan.
-    void (async () => {
-      const guild = client.guilds.cache.get(ASHEN_WARRIORS);
-      if (!guild) throw new Error("Ashen Warriors guild unavailable");
-      await guild.channels.fetch();
-      const targets = new Map();
-      for (const channel of guild.channels.cache.values()) {
-        if (!keywordAlertAllowedChannel(channel, guild)) continue;
-        targets.set(channel.id, channel);
-        if (!channel.threads) continue;
-        try {
-          const active = await channel.threads.fetchActive();
-          for (const thread of active.threads.values()) {
-            if (keywordAlertAllowedChannel(thread, guild)) targets.set(thread.id, thread);
-          }
-          for (const type of ["public", "private"]) {
-            let before;
-            for (let page = 0; page < 20; page++) {
-              try {
-                const result = await channel.threads.fetchArchived({ type, limit: 100, ...(before ? { before } : {}) });
-                for (const thread of result.threads.values()) {
-                  if (keywordAlertAllowedChannel(thread, guild)) targets.set(thread.id, thread);
-                }
-                if (!result.hasMore || !result.threads.size) break;
-                const last = [...result.threads.values()].at(-1);
-                before = type === "public" ? last.archiveTimestamp : last.id;
-                if (!before) break;
-              } catch (error) {
-                console.warn("⚠️ Keyword recent archived thread discovery:", channel.id, type, error.message);
-                break;
-              }
-            }
-          }
-        } catch (error) {
-          console.warn("⚠️ Keyword recent thread discovery:", channel.id, error.message);
-        }
-      }
-      let checked = 0, matches = 0, sent = 0, errors = 0;
-      for (const channel of targets.values()) {
-        try {
-          const recent = await channel.messages.fetch({ limit: 100 });
-          checked += recent.size;
-          for (const message of recent.values()) {
-            if (!message.author?.bot && !message.webhookId && keywordAlertMatches(message.content).length) {
-              matches++;
-              if (await sendKeywordAlert(message, true)) sent++;
-            }
-          }
-        } catch (error) {
-          errors++;
-          console.error("❌ Keyword recent channel check:", channel.id, error.message);
-        }
-      }
-      console.log("🔎 All-channel recent keyword check:", { channels: targets.size, checked, matches, sent, errors });
-      const owner = await client.users.fetch(KEYWORD_ALERT_OWNER_ID);
-      await owner.send({
-        content: "🔎 **Vestra all-channel keyword check**\\nChecked the latest 100 messages in each of " + targets.size + " accessible channels/threads (not a full history rescan). Messages checked: " + checked + ". Keyword matches: " + matches + ". Individual linked DMs sent: " + sent + ". Channel errors: " + errors + ". Live alerts remain enabled across Ashen Warriors.",
-        allowedMentions: { parse: [] }
-      });
-    })().catch(error => console.error("❌ All-channel recent keyword check failed:", error));
+    // One-time replay of historical messages to recover individual keyword alerts.
+    // A fresh checkpoint namespace is needed because the previous scan counted matches
+    // but recorded no successfully delivered alerts.
+    void scanKeywordHistory();
+    setInterval(() => void scanKeywordHistory(), 30 * 1000);
   }, 90 * 1000);
 }
 
