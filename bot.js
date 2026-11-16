@@ -5231,7 +5231,7 @@ function keywordAlertAllowedChannel(channel, guild) {
 }
 
 async function sendKeywordAlert(message, historical = false) {
-  if (!message?.guild || message.guild.id !== ASHEN_WARRIORS || !message.author ||
+  if (!message?.guild || message.guild.id !== getGuild()?.id || !message.author ||
       message.author.bot || message.webhookId || !message.content) return false;
   if (!keywordAlertAllowedChannel(message.channel, message.guild)) return false;
   const matches = keywordAlertMatches(message.content);
@@ -5268,7 +5268,7 @@ async function scanKeywordHistory() {
   keywordHistoryRunning = true;
   try {
     const guild = getGuild();
-    if (!guild || guild.id !== ASHEN_WARRIORS) return;
+    if (!guild) return;
     await guild.channels.fetch();
     const channels = [...guild.channels.cache.values()].filter(ch => keywordAlertAllowedChannel(ch, guild));
     let sent = 0;
