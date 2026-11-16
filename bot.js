@@ -5374,14 +5374,31 @@ function startKeywordHistoryScan() {
     void (async () => {
       try {
         const owner = await client.users.fetch(KEYWORD_ALERT_OWNER_ID);
-        await owner.send({ content: "🔎 **Vestra keyword monitor online**\nLive alerts are enabled. Historical scan is starting. Keywords: " + KEYWORD_ALERT_TERMS.join(", "), allowedMentions: { parse: [] } });
+        await owner.send({ content: "🔎 **Vestra keyword monitor online**\nLive alerts are enabled. Only recent staff-chat messages will be checked. Keywords: " + KEYWORD_ALERT_TERMS.join(", "), allowedMentions: { parse: [] } });
         console.log("✅ Keyword monitor startup DM delivered.");
       } catch (error) {
         console.error("❌ Keyword monitor startup DM FAILED:", error);
       }
     })();
-    void scanKeywordHistory();
-    setInterval(() => void scanKeywordHistory(), 30 * 1000);
+    // Owner requested no further full-server historical rescans.
+    // Check only the latest messages in staff chat and send a direct diagnostic DM.
+    void (async () => {
+      const owner = await client.users.fetch(KEYWORD_ALERT_OWNER_ID);
+      const channel = await client.channels.fetch("1569224389281583134");
+      const recent = await channel.messages.fetch({ limit: 100 });
+      const hits = [...recent.values()].filter(m => !m.author?.bot && keywordAlertMatches(m.content).length);
+      let sent = 0, skipped = 0;
+      for (const message of hits) {
+        // Previously reserved IDs are not sent again.
+        if (await sendKeywordAlert(message, true)) sent++;
+        else skipped++;
+      }
+      await owner.send({
+        content: "🔎 **Vestra keyword DM check**\\nChecked only the 100 most recent staff-chat messages (no server-wide scan). Matching messages: " + hits.length + ". New alerts sent: " + sent + ". Not delivered (including already-recorded IDs): " + skipped + ". Live monitoring remains enabled.",
+        allowedMentions: { parse: [] }
+      });
+      console.log("🔎 Targeted keyword DM check:", { checked: recent.size, matches: hits.length, sent, skipped });
+    })().catch(error => console.error("❌ Targeted keyword DM check failed:", error));
   }, 90 * 1000);
 }
 
