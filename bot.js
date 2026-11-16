@@ -5290,9 +5290,9 @@ async function scanKeywordHistory() {
         continue;
       }
       for (const message of batch.values()) {
-        // Preserve progress on every match, even if the DM limit is reached.
         if (sent >= 10) break;
         if (await sendKeywordAlert(message, true)) sent++;
+        // Persist the oldest processed message, not the newest in the batch.
         await dbSetState(key, { before: message.id });
       }
       if (sent >= 10) break;
@@ -5318,7 +5318,7 @@ function startKeywordHistoryScan() {
     void (async () => {
       try {
         const owner = await client.users.fetch(KEYWORD_ALERT_OWNER_ID);
-        await owner.send({ content: "🔎 **Vestra keyword monitor online**\\nLive alerts are enabled. Historical scan is starting. Keywords: " + KEYWORD_ALERT_TERMS.join(", "), allowedMentions: { parse: [] } });
+        await owner.send({ content: "🔎 **Vestra keyword monitor online**\nLive alerts are enabled. Historical scan is starting. Keywords: " + KEYWORD_ALERT_TERMS.join(", "), allowedMentions: { parse: [] } });
         console.log("✅ Keyword monitor startup DM delivered.");
       } catch (error) {
         console.error("❌ Keyword monitor startup DM FAILED:", error);
@@ -6303,6 +6303,9 @@ client.once(Events.ClientReady, async readyClient => {
 
   try {
     await initDatabase();
+    // Keyword monitoring must not wait for unrelated Discord panels or setup tasks.
+    startKeywordHistoryScan();
+    console.log("🔎 Keyword monitoring scheduled immediately after database initialization.");
     await cleanupLegacySocialCompanions();
   } catch (error) {
     console.error("❌ DATABASE FAILED TO INITIALIZE:", error);
@@ -6375,7 +6378,6 @@ client.once(Events.ClientReady, async readyClient => {
 
   startScheduler();
   startTranslationHealthMonitor();
-  startKeywordHistoryScan();
   void cleanOldNightConquestStaffEntry().catch(error =>
     console.error("❌ Old Night Conquest staff log cleanup:", error)
   );
