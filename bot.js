@@ -5231,10 +5231,13 @@ function keywordAlertAllowedChannel(channel, guild) {
 }
 
 async function sendKeywordAlert(message, historical = false) {
-  if (!message?.guild || message.guild.id !== getGuild()?.id || !message.author ||
+  if (!message?.guild || message.guild.id !== ASHEN_WARRIORS || !message.author ||
       message.author.bot || message.webhookId || !message.content) return false;
-  if (!keywordAlertAllowedChannel(message.channel, message.guild)) return false;
   const matches = keywordAlertMatches(message.content);
+  if (matches.length && !keywordAlertAllowedChannel(message.channel, message.guild)) {
+    console.warn("⚠️ Keyword match skipped by channel permissions:", message.channel.id, message.channel.name);
+    return false;
+  }
   if (!matches.length) return false;
   const reserved = await pool.query(
     "INSERT INTO keyword_alert_deliveries(message_id) VALUES($1) ON CONFLICT DO NOTHING RETURNING message_id",
@@ -5272,6 +5275,7 @@ async function scanKeywordHistory() {
     if (!guild) return;
     await guild.channels.fetch();
     const channels = [...guild.channels.cache.values()].filter(ch => keywordAlertAllowedChannel(ch, guild));
+    console.log(`🔎 Keyword history starting: ${channels.length} eligible channels in ${guild.name}.`);
     let sent = 0;
     let remaining = 0;
     for (const channel of channels) {
@@ -5311,6 +5315,15 @@ async function scanKeywordHistory() {
 
 function startKeywordHistoryScan() {
   setTimeout(() => {
+    void (async () => {
+      try {
+        const owner = await client.users.fetch(KEYWORD_ALERT_OWNER_ID);
+        await owner.send({ content: "🔎 **Vestra keyword monitor online**\\nLive alerts are enabled. Historical scan is starting. Keywords: " + KEYWORD_ALERT_TERMS.join(", "), allowedMentions: { parse: [] } });
+        console.log("✅ Keyword monitor startup DM delivered.");
+      } catch (error) {
+        console.error("❌ Keyword monitor startup DM FAILED:", error);
+      }
+    })();
     void scanKeywordHistory();
     setInterval(() => void scanKeywordHistory(), 2 * 60 * 1000);
   }, 90 * 1000);
