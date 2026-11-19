@@ -650,6 +650,15 @@ function safeDisplayName(member, user) {
   return member?.displayName || user?.globalName || user?.username || "Member";
 }
 
+function translationAllowedMentions(text) {
+  const mentions = getMentionIds(text);
+  return {
+    parse: /@(everyone|here)\b/.test(text || "") ? ["everyone"] : [],
+    users: mentions.users,
+    roles: mentions.roles
+  };
+}
+
 function getMentionIds(text) {
   const users = new Set();
   const roles = new Set();
@@ -781,6 +790,8 @@ function protectDiscordContent(input) {
   protect(/```[\s\S]*?```/g);
   protect(/`[^`\n]+`/g);
 
+  // Preserve Discord broadcast mentions as literal mentions across translations.
+  protect(/@(everyone|here)\b/g);
   // Discord structures.
   protect(/<a?:[A-Za-z0-9_]+:\d+>/g);
   protect(/<@!?\d+>|<@&\d+>|<#\d+>|<t:\d+(?::[tTdDfFR])?>/g);
@@ -2444,9 +2455,7 @@ async function createTranslatedCopy(message, groupId, sourceKey, targetKey, repl
     username: `${safeDisplayName(message.member, message.author)} • ${sourceInfo.emoji}`,
     avatarURL: message.author.displayAvatarURL({ extension: "png", size: 256 }),
     allowedMentions: {
-      parse: [],
-      users: mentions.users,
-      roles: mentions.roles
+      ...translationAllowedMentions(message.content || "")
     }
   };
   let webhook = await getTranslationWebhook(targetChannel);
@@ -2548,11 +2557,9 @@ async function handleGeneralMessageUpdate(message) {
       const replyHeader = await buildReplyHeader(mapping.reply_to_group_id, copy.language_key, message.guild.id);
       const attachments = formatAttachments(message.attachments);
       const base = limitText([replyHeader.trimEnd(), translated, attachments].filter(Boolean).join("\n"), 1850);
-      const mentions = getMentionIds(message.content || "");
-
       await pool.query("UPDATE translation_messages SET base_content = $2 WHERE message_id = $1", [copy.message_id, base]);
       await editTranslatedCopy(copy, `${base}${summary}`, {
-        parse: [], users: mentions.users, roles: mentions.roles
+        ...translationAllowedMentions(message.content || "")
       });
     });
   }
