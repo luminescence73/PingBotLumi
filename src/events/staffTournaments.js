@@ -10,8 +10,11 @@ export async function tournamentNext(interaction) {
   if (!state || state.phase !== "battle") return interaction.reply({ content: "❌ There isn't a battle waiting for the next vote right now.", flags: MessageFlags.Ephemeral });
   const tournament = TOURNAMENTS[state.tournament];
   if (state.round >= tournament.rounds) return interaction.reply({ content: "Round 4 is already complete. Use Finish Tournament after the final battle.", flags: MessageFlags.Ephemeral });
-  await startTournamentVote(state.tournament, state.round + 1, true, interaction.user.id);
-  return interaction.reply({ content: `✅ Round ${state.round + 1} voting opened.`, flags: MessageFlags.Ephemeral });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const opened = await startTournamentVote(state, interaction.user.id);
+  return interaction.editReply(opened
+    ? `✅ Round ${state.round + 1} voting opened.`
+    : "Tournament state changed before your request could be applied.");
 }
 
 export async function tournamentFinish(interaction) {
@@ -19,6 +22,9 @@ export async function tournamentFinish(interaction) {
   if (!isStaff(member)) return interaction.reply({ content: "❌ Only Ashen staff can finish Tournament Mode.", flags: MessageFlags.Ephemeral });
   const state = await getActiveTournamentState();
   if (!state) return interaction.reply({ content: "❌ No active tournament.", flags: MessageFlags.Ephemeral });
-  await finishTournament(state.tournament);
-  return interaction.reply({ content: "Tournament closed. The War Board has returned to the standard schedule.", flags: MessageFlags.Ephemeral });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const finished = await finishTournament(state);
+  return interaction.editReply(finished
+    ? "Tournament closed. The War Board has returned to the standard schedule."
+    : "Tournament state changed before your request could be applied.");
 }

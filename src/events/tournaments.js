@@ -49,35 +49,54 @@ export async function startTournamentEvent(tournamentKey, announcementText, labe
   await updateEventBoard();
 }
 
-export async function startTournamentVote(tournamentKey, round, pingMembers = true, actorId = null) {
-  const tournament = TOURNAMENTS[tournamentKey];
-  const parts = chicagoParts();
-  const ends = new Date(Date.now() + tournament.voteMinutes * 60 * 1000);
-  await setTournamentState(tournamentKey, dateKey(parts), round, "voting", ends);
+// Match the state the caller saw so stale clicks and the expiry timer cannot
+// overwrite a newer round or release a second round-open notification.
+async function transitionTournament(state, { activeDate, round, phase, voteEndsAt = null }) {
+  const result = await pool.query(
+    `UPDATE tournament_state
+     SET active_date = $5, round = $6, phase = $7, vote_ends_at = $8, updated_at = NOW()
+     WHERE tournament = $1 AND active_date IS NOT DISTINCT FROM $2
+       AND round = $3 AND phase = $4
+     RETURNING tournament`,
+    [state.tournament, state.active_date, state.round, state.phase, activeDate, round, phase, voteEndsAt]
+  );
+  return result.rowCount > 0;
+}
 
-  if (pingMembers) {
-    await sendLocalizedRoleNotification(
-      tournament.role,
-      `🗳️ ${tournament.name} Round ${round} voting is OPEN! You have ${tournament.voteMinutes} minutes to vote.`,
-      `${tournament.name} — Round ${round} Voting Open`,
-      {actorId}
-    );
-  }
+export async function startTournamentVote(state, actorId) {
+  const tournament = TOURNAMENTS[state.tournament];
+  const round = state.round + 1;
+  const voteEndsAt = new Date(Date.now() + tournament.voteMinutes * 60 * 1000);
+  const opened = await transitionTournament(state, {
+    activeDate: dateKey(chicagoParts()), round, phase: "voting", voteEndsAt
+  });
+  if (!opened) return false;
 
+  await sendLocalizedRoleNotification(
+    tournament.role,
+    `🗳️ ${tournament.name} Round ${round} voting is OPEN! You have ${tournament.voteMinutes} minutes to vote.`,
+    `${tournament.name} — Round ${round} Voting Open`,
+    { actorId }
+  );
   await updateEventBoard();
+  return true;
 }
 
 export async function closeTournamentVote(state) {
   const tournament = TOURNAMENTS[state.tournament];
   const phase = state.round >= tournament.rounds ? "final_battle" : "battle";
-  await setTournamentState(state.tournament, state.active_date, state.round, phase, null);
-  await updateEventBoard();
+  const closed = await transitionTournament(state, {
+    activeDate: state.active_date, round: state.round, phase
+  });
+  if (closed) await updateEventBoard();
 }
 
-export async function finishTournament(tournamentKey) {
-  const parts = chicagoParts();
-  await setTournamentState(tournamentKey, dateKey(parts), 0, "complete", null);
-  await updateEventBoard();
+export async function finishTournament(state) {
+  const finished = await transitionTournament(state, {
+    activeDate: dateKey(chicagoParts()), round: 0, phase: "complete"
+  });
+  if (finished) await updateEventBoard();
+  return finished;
 }
 
 function countdownText(relativeMinutes) {

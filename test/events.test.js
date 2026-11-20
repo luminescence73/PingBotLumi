@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Collection } from "discord.js";
 import { SCHEDULED_EVENTS, chicagoParts, eventApplies, eventTimeForDate } from "../src/events/schedule.js";
-import { TOURNAMENTS } from "../roleConfig.js";
+import { REMINDERS, TOURNAMENTS } from "../roleConfig.js";
 import { pool } from "../src/runtime/database.js";
 import { client } from "../src/runtime/client.js";
 import { closeTournamentVote, startTournamentVote } from "../src/events/tournaments.js";
 import { conquestSecondRunSelect } from "../src/events/staffConquest.js";
 import { tournamentNext } from "../src/events/staffTournaments.js";
 import { staffPingRefresh } from "../src/events/pingLog.js";
-import { CHANNELS } from "../guildConfig.js";
+import { sendLocalizedRoleNotification } from "../src/events/notifications.js";
+import { CHANNELS, LANGUAGE_CHANNELS } from "../guildConfig.js";
 
 test("reminder schedules preserve Central time, DST and alternating Nexus and Chaos Sundays", () => {
   const sever = SCHEDULED_EVENTS.find(item => item.key === "server_tournament_start");
@@ -27,28 +28,39 @@ test("reminder schedules preserve Central time, DST and alternating Nexus and Ch
   assert.equal(eventApplies(chaos, 2026, 11, 22, 0), false);
 });
 
-test("Sever and Nexus retain their vote lengths and four rounds", async t => {
+test("Sever and Nexus preserve vote lengths and reject a duplicate round transition", async t => {
   const changes = [];
+  let saved;
   t.mock.method(pool, "query", async (sql, args) => {
-    assert.match(sql, /INSERT INTO tournament_state/);
-    changes.push(args);
-    return { rows: [] };
+    assert.match(sql, /UPDATE tournament_state/);
+    const [tournament, oldDate, oldRound, oldPhase, date, round, phase, end] = args;
+    if (saved.tournament !== tournament || saved.active_date !== oldDate ||
+        saved.round !== oldRound || saved.phase !== oldPhase) return { rowCount: 0 };
+    saved = { tournament, active_date: date, round, phase, vote_ends_at: end };
+    changes.push(saved);
+    return { rowCount: 1 };
   });
   t.mock.method(client.channels, "fetch", async () => null);
   for (const [key, voteMinutes] of [["sever", 5], ["nexus", 10]]) {
     assert.equal(TOURNAMENTS[key].rounds, 4);
+    saved = { tournament: key, active_date: "2026-11-20", round: 0, phase: "battle" };
+    const battle = saved;
     const before = Date.now();
-    await startTournamentVote(key, 1, false);
-    const [tournament, date, round, phase, end] = changes.at(-1);
-    assert.equal(tournament, key);
-    assert.equal(round, 1);
-    assert.equal(phase, "voting");
-    assert.ok(end >= before + voteMinutes * 60_000);
-    assert.ok(end <= Date.now() + voteMinutes * 60_000);
-    await closeTournamentVote({ tournament, active_date: date, round: 1 });
-    assert.equal(changes.at(-1)[3], "battle");
-    await closeTournamentVote({ tournament, active_date: date, round: 4 });
-    assert.equal(changes.at(-1)[3], "final_battle");
+    assert.deepEqual(await Promise.all([
+      startTournamentVote(battle, "staff-1"),
+      startTournamentVote(battle, "staff-2")
+    ]), [true, false]);
+    const vote = changes.at(-1);
+    assert.equal(vote.tournament, key);
+    assert.equal(vote.round, 1);
+    assert.equal(vote.phase, "voting");
+    assert.ok(vote.vote_ends_at >= before + voteMinutes * 60_000);
+    assert.ok(vote.vote_ends_at <= Date.now() + voteMinutes * 60_000);
+    await closeTournamentVote(vote);
+    assert.equal(saved.phase, "battle");
+    saved = { ...vote, round: 4 };
+    await closeTournamentVote(saved);
+    assert.equal(saved.phase, "final_battle");
   }
 });
 
@@ -74,4 +86,57 @@ test("staff-only controls refuse regular members and a refresh without channel p
   t.mock.method(client.channels, "fetch", async () => null);
   await staffPingRefresh({ ...interaction, user: { id: "owner" } });
   assert.equal(replies.at(-1), "Staff monitor channel privacy cannot be verified.");
+});
+
+
+test("a multilingual reminder subscriber gets one ping in their saved notification language", async t => {
+  const sends = [];
+  const assigned = [];
+  const french = LANGUAGE_CHANNELS.french;
+  const english = LANGUAGE_CHANNELS.english;
+  const member = {
+    id: "member",
+    user: { bot: false },
+    roles: {
+      cache: new Collection([[french.role, {}], [english.role, {}]]),
+      add: async role => { assigned.push(role.id); }
+    }
+  };
+  const subscribers = new Collection([[member.id, member]]);
+  const subscription = { id: REMINDERS.reset.role, name: "Reset", members: subscribers };
+  const helper = { id: "french-reset", mentionable: true, members: new Collection() };
+  const channels = new Collection();
+  const guild = {
+    channels: { cache: channels, fetch: async () => channels },
+    members: { cache: subscribers, fetch: async () => subscribers },
+    roles: { fetch: async id => id === subscription.id ? subscription : helper }
+  };
+  client.channels.cache.set(CHANNELS.START_HERE, { guild });
+  t.after(() => client.channels.cache.delete(CHANNELS.START_HERE));
+  t.mock.method(console, "warn", () => {});
+  t.mock.method(console, "log", () => {});
+  t.mock.method(client.channels, "fetch", async id => ({
+    id, isTextBased: () => true, permissionsFor: () => ({ has: () => true }),
+    send: async payload => sends.push({ id, payload })
+  }));
+  t.mock.method(globalThis, "fetch", async (_, options) => {
+    assert.equal(JSON.parse(options.body).target, "fr");
+    return { ok: true, json: async () => ({ data: { translations: [{ translatedText: "Rappel de réinitialisation" }] } }) };
+  });
+  t.mock.method(pool, "query", async sql => {
+    if (sql.includes("FROM user_preferences")) {
+      return { rows: [{ user_id: member.id, primary_language: "french" }] };
+    }
+    if (sql.includes("FROM localized_ping_roles")) {
+      return { rows: [{ language_key: "french", scoped_role_id: helper.id }] };
+    }
+    assert.match(sql, /INSERT INTO guild_ping_staff_audit/);
+    return { rowCount: 1 };
+  });
+  assert.equal(await sendLocalizedRoleNotification(subscription.id, "Reset reminder", "Reset"), 1);
+  assert.deepEqual(assigned, [helper.id]);
+  assert.equal(sends.length, 1);
+  assert.equal(sends[0].id, french.channel);
+  assert.equal(sends[0].payload.content, "<@&french-reset>\nRappel de réinitialisation");
+  assert.deepEqual(sends[0].payload.allowedMentions.roles, [helper.id]);
 });
