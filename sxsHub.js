@@ -1,7 +1,7 @@
 import { ChannelType } from "discord.js";
 import { createHash } from "node:crypto";
+import { parseCodes, parseHome, parseRoadmapWeek, parseSeasonIndex, parseSeasonPage } from "./src/sxs/valkyrieParsers.js";
 
-const TZ = "America/Chicago";
 const SXS_CATEGORY_MATCH = "SWORD X STAFF";
 const REFRESH_MS = 30 * 60 * 1000;
 
@@ -60,42 +60,6 @@ const CHANNEL_DEFS = [
 
 let activeHub = null;
 
-function decodeHtmlEntities(value = "") {
-  const named = {
-    amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", "#39": "'",
-    nbsp: " ", middot: "·", times: "×", ndash: "–", mdash: "—",
-    hellip: "…", rarr: "→"
-  };
-
-  return String(value)
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, num) => String.fromCodePoint(parseInt(num, 10)))
-    .replace(/&([a-z0-9#]+);/gi, (full, key) => named[key.toLowerCase()] ?? full);
-}
-
-function stripHtml(value = "") {
-  return decodeHtmlEntities(String(value)
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
-    .replace(/<svg\b[^>]*>[\s\S]*?<\/svg>/gi, " ")
-    .replace(/<[^>]+>/g, " "))
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function htmlToLines(html = "") {
-  return decodeHtmlEntities(String(html)
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<svg\b[^>]*>[\s\S]*?<\/svg>/gi, "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(?:p|div|section|article|li|h[1-6]|button|a|tr|td|th)>/gi, "\n")
-    .replace(/<[^>]+>/g, ""))
-    .split(/\r?\n/)
-    .map(line => line.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-}
-
 function truncate(value, max = 1024) {
   const text = String(value ?? "").trim();
   if (text.length <= max) return text;
@@ -134,234 +98,6 @@ async function fetchHtml(url) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-function extractHtmlAnchors(html = "") {
-  const anchors = [];
-  const regex = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-  let match;
-
-  while ((match = regex.exec(html))) {
-    const href = decodeHtmlEntities(match[1]);
-    const label = stripHtml(match[2]);
-    if (href && label) anchors.push({ href, label });
-  }
-
-  return anchors;
-}
-
-function parseHome(html) {
-  const lines = htmlToLines(html);
-  const seasonLine = lines.find(line => /^Season\s+\d+\s*·/i.test(line)) || "";
-  const seasonMatch = seasonLine.match(/^Season\s+(\d+)\s*·\s*([^·]+?)\s*·\s*server day\s*(\d+)/i);
-
-  const findLine = pattern => lines.find(line => pattern.test(line)) || null;
-  const hunt = findLine(/^Grand Treasure Hunt\s*#/i);
-  const reward = findLine(/^Level\s*5\s*:/i);
-  const mini = findLine(/^(?:🎲\s*)?Mini-game\s*:/i);
-  const next = findLine(/^Next\s*:/i);
-
-  const anchors = extractHtmlAnchors(html);
-  const seenNews = new Set();
-  const news = [];
-
-  for (const anchor of anchors) {
-    if (!/(?:discord\.com|swordxstaff\.boltray\.com)/i.test(anchor.href)) continue;
-    if (/^(?:log in|discord|see all)/i.test(anchor.label)) continue;
-    const key = `${anchor.href}|${anchor.label}`;
-    if (seenNews.has(key)) continue;
-    seenNews.add(key);
-    news.push(anchor);
-    if (news.length >= 5) break;
-  }
-
-  const giftStart = lines.findIndex(line => /^Gift codes$/i.test(line) || /^🎁\s*Gift codes/i.test(line));
-  const giftEnd = lines.findIndex((line, index) => index > giftStart && /Guild events/i.test(line));
-  const currentCodeCandidates = (giftStart >= 0
-    ? lines.slice(giftStart + 1, giftEnd > giftStart ? giftEnd : giftStart + 20)
-    : [])
-    .filter(line => /^[A-Z0-9]{4,30}$/.test(line));
-
-  return {
-    season: seasonMatch ? {
-      number: Number(seasonMatch[1]),
-      region: seasonMatch[2].trim(),
-      serverDay: Number(seasonMatch[3])
-    } : null,
-    weekly: {
-      hunt: hunt || null,
-      reward: reward?.replace(/^Level\s*5\s*:\s*/i, "") || null,
-      miniGame: mini?.replace(/^(?:🎲\s*)?Mini-game\s*:\s*/i, "") || null,
-      next: next?.replace(/^Next\s*:\s*/i, "") || null
-    },
-    currentCodeCandidates,
-    news
-  };
-}
-
-function parseRoadmapWeek(html) {
-  const lines = htmlToLines(html);
-  const reset = lines.find(line => /^Both end at /i.test(line)) ||
-    lines.find(line => /end at the .* reset/i.test(line)) || null;
-
-  const comingIndex = lines.findIndex(line => /^Coming Up$/i.test(line));
-  const upcoming = [];
-
-  if (comingIndex >= 0) {
-    for (const line of lines.slice(comingIndex + 1, comingIndex + 20)) {
-      if (/^(?:Everything|Milestones|Events|Season All seasons)/i.test(line)) break;
-      if (/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+[A-Z][a-z]{2}\s+\d{1,2}/.test(line)) {
-        upcoming.push(line);
-      }
-      if (upcoming.length >= 4) break;
-    }
-  }
-
-  return { reset, upcoming };
-}
-
-function parseCodes(html) {
-  const lines = htmlToLines(html);
-  const start = Math.max(0, lines.findIndex(line => /Copy all codes/i.test(line)) + 1);
-  const codes = [];
-  const seen = new Set();
-
-  for (let i = start; i < lines.length - 1; i++) {
-    const code = lines[i];
-    if (!/^[A-Z0-9]{4,30}$/.test(code) || seen.has(code)) continue;
-
-    const rewards = [];
-    for (let j = i + 1; j < Math.min(lines.length, i + 5); j++) {
-      if (/^Tap to copy$/i.test(lines[j])) break;
-      if (/^[A-Z0-9]{4,30}$/.test(lines[j])) break;
-      rewards.push(lines[j]);
-    }
-
-    if (!rewards.length) continue;
-    seen.add(code);
-    codes.push({ code, reward: rewards.join(" · ") });
-  }
-
-  return codes;
-}
-
-function parseSeasonIndex(html, currentSeasonNumber) {
-  const anchors = extractHtmlAnchors(html)
-    .filter(anchor => /\/seasons\/s\d+$/i.test(anchor.href));
-
-  const parsed = anchors.map(anchor => {
-    const match = anchor.label.match(
-      /Season\s+(\d+)\s+(Past|Current|Upcoming)\s+(.+?)\s+Class tier\s+T(\d+)\s*·\s*(.+?)(?=\s+\d+\s+builds|$)/i
-    );
-
-    if (!match) return null;
-    return {
-      number: Number(match[1]),
-      status: match[2],
-      region: match[3].trim(),
-      tier: Number(match[4]),
-      dateRange: match[5].trim(),
-      href: anchor.href.startsWith("http") ? anchor.href : `https://www.valkyrie.tips${anchor.href}`
-    };
-  }).filter(Boolean);
-
-  const current = parsed.find(item => item.number === currentSeasonNumber) ||
-    parsed.find(item => /^Current$/i.test(item.status)) || null;
-  const next = current
-    ? parsed.filter(item => item.number > current.number).sort((a, b) => a.number - b.number)[0] || null
-    : null;
-
-  return { current, next, all: parsed };
-}
-
-function monthIndex(shortMonth) {
-  return ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].indexOf(shortMonth);
-}
-
-function parseMilestoneDate(label) {
-  const match = String(label).match(/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+([A-Z][a-z]{2})\s+(\d{1,2})$/);
-  if (!match) return null;
-
-  const month = monthIndex(match[1]);
-  if (month < 0) return null;
-
-  const now = new Date();
-  let year = Number(new Intl.DateTimeFormat("en-US", {
-    timeZone: TZ,
-    year: "numeric"
-  }).format(now));
-
-  let date = new Date(Date.UTC(year, month, Number(match[2]), 12));
-  if (date.getTime() < now.getTime() - 120 * 86400_000) {
-    year += 1;
-    date = new Date(Date.UTC(year, month, Number(match[2]), 12));
-  }
-
-  return date;
-}
-
-function parseSeasonPage(html, fallbackSeason) {
-  const lines = htmlToLines(html);
-  const tierLine = lines.find(line => /^T\d+\s+.+?tier list/i.test(line)) || "";
-  const tierMatch = tierLine.match(/^T(\d+)\s+(.+?)\s+tier list/i);
-  const tierIndex = tierLine ? lines.indexOf(tierLine) : -1;
-  const classes = tierIndex >= 0 ? lines[tierIndex + 1] || null : null;
-
-  const milestoneStart = lines.findIndex(line => /^Milestones/i.test(line));
-  const milestoneEnd = lines.findIndex((line, index) => index > milestoneStart && /^Dungeon gear/i.test(line));
-  const section = milestoneStart >= 0
-    ? lines.slice(milestoneStart + 1, milestoneEnd > milestoneStart ? milestoneEnd : lines.length)
-    : [];
-  const milestones = [];
-
-  for (let i = 0; i < section.length; i++) {
-    const date = parseMilestoneDate(section[i]);
-    if (!date) continue;
-
-    const label = section[i];
-    const detail = [];
-    let serverDay = null;
-
-    for (let j = i + 1; j < section.length; j++) {
-      if (parseMilestoneDate(section[j])) break;
-      const dayMatch = section[j].match(/^Server day\s+(\d+)/i);
-      if (dayMatch) {
-        serverDay = Number(dayMatch[1]);
-        continue;
-      }
-      if (/^(?:✓\s*)?Confirmed$/i.test(section[j])) continue;
-      if (/^(?:View|Full roadmap)/i.test(section[j])) continue;
-      detail.push(section[j]);
-    }
-
-    milestones.push({ label, date, serverDay, detail: detail.slice(0, 5) });
-  }
-
-  return {
-    seasonNumber: fallbackSeason?.number ?? null,
-    tier: tierMatch ? Number(tierMatch[1]) : null,
-    region: tierMatch?.[2]?.trim() || fallbackSeason?.region || null,
-    classes,
-    milestones
-  };
-}
-
-function splitDiscordText(lines, max = 3600) {
-  const chunks = [];
-  let current = "";
-
-  for (const line of lines) {
-    const candidate = current ? `${current}\n${line}` : line;
-    if (candidate.length > max && current) {
-      chunks.push(current);
-      current = line;
-    } else {
-      current = candidate;
-    }
-  }
-
-  if (current) chunks.push(current);
-  return chunks;
 }
 
 function formatMilestone(item) {
@@ -417,7 +153,7 @@ async function fetchLiveData() {
 
 function plainBoard(title, sections, sourceUrl, stale = false) {
   const body = [
-    `# ✦ ${title.replace(/^SWORD X STAFF\\s*\\|\\s*/i, "")}`,
+    `# ✦ ${title.replace(/^SWORD X STAFF\s*\|\s*/i, "")}`,
     "",
     ...sections.filter(Boolean),
     "",
