@@ -1,6 +1,6 @@
 import { ChannelType } from "discord.js";
 import { createHash } from "node:crypto";
-import { parseCodes, parseHome, parseRoadmapWeek, parseSeasonIndex, parseSeasonPage } from "./src/sxs/valkyrieParsers.js";
+import { currentGiftCodes, parseCodes, parseHome, parseRoadmapWeek, parseSeasonIndex, parseSeasonPage } from "./src/sxs/valkyrieParsers.js";
 
 const SXS_CATEGORY_MATCH = "SWORD X STAFF";
 const REFRESH_MS = 30 * 60 * 1000;
@@ -129,17 +129,7 @@ async function fetchLiveData() {
   const seasonIndex = parseSeasonIndex(seasonsHtml, home.season.number);
   const roadmapWeek = parseRoadmapWeek(roadmapHtml);
   const codes = parseCodes(codesHtml);
-  const codeMap = new Map(codes.map(item => [item.code, item]));
-
-  for (const code of home.currentCodeCandidates) {
-    if (!codeMap.has(code)) {
-      codeMap.set(code, {
-        code,
-        reward: "Current code — open the live codes page for reward details."
-      });
-    }
-  }
-
+  // Dedicated current-code listing is authoritative; do not revive removed codes from the homepage.
   return {
     fetchedAt: new Date().toISOString(),
     seasonUrl,
@@ -147,7 +137,7 @@ async function fetchLiveData() {
     season,
     seasonIndex,
     roadmapWeek,
-    codes: [...codeMap.values()]
+    codes: currentGiftCodes(codes)
   };
 }
 
