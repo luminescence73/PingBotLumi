@@ -245,3 +245,16 @@ export function parseSeasonPage(html, fallbackSeason) {
     milestones
   };
 }
+
+// Only use codes currently listed by the dedicated source. Explicit expiry
+// dates are honored when supplied; absence is not proof of redemption failure.
+export function currentGiftCodes(codes, now = Date.now()) {
+  const unique = new Map();
+  for (const item of codes) {
+    if (item.expired === true) continue;
+    const expiry = item.expiresAt ? Date.parse(item.expiresAt) : NaN;
+    if (Number.isFinite(expiry) && expiry <= now) continue;
+    if (!unique.has(item.code)) unique.set(item.code, item);
+  }
+  return [...unique.values()];
+}
