@@ -1,3 +1,4 @@
+import { handleSocialTranslationButton } from "../translation/social.js";
 import { staffPingRefresh } from "../events/pingLog.js";
 import { adminApplyTheme, adminSyncIntroductions } from "../guild/admin.js";
 import {
@@ -94,6 +95,7 @@ const selectMenus = new Map(Object.entries({
 
 client.on(Events.InteractionCreate, async interaction => {
   try {
+    if (await handleSocialTranslationButton(interaction)) return;
     if (await handleConquestIntelInteraction(interaction, { client, pool, isStaff })) return;
 
     const routes = interaction.isButton() ? buttons
