@@ -1,3 +1,4 @@
+import { runDiagnostics } from './diagnostics.js';
 import { client } from "./client.js";
 import { Events } from "discord.js";
 import { BOT_NAME } from "../shared/discord.js";
@@ -124,6 +125,7 @@ async function onReady(readyClient) {
     console.error("❌ Permission audit error:", error);
   }
 
+  void runDiagnostics(readyClient, ashenGuild, pool).catch(error => console.error('Vestra diagnostics failed:', error.message));
   startScheduler();
   startTranslationHealthMonitor();
   void cleanOldNightConquestStaffEntry().catch(error =>
