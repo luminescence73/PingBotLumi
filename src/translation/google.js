@@ -37,7 +37,9 @@ function protectDiscordContent(input) {
 function restoreDiscordContent(input, replacements) {
   let text = input || "";
   for (const item of replacements) {
-    text = text.split(item.token).join(item.original);
+    // Google may alter case or insert whitespace into placeholder tokens.
+    const flexible = item.token.split("").join("\\s*");
+    text = text.replace(new RegExp(flexible, "gi"), () => item.original);
   }
   return text;
 }
@@ -104,7 +106,14 @@ export async function googleTranslate(text, targetCode, sourceCode = null) {
   const translated = data?.data?.translations?.[0]?.translatedText;
   if (typeof translated !== "string") throw new Error("Google returned no translated text.");
 
-  const restored = restoreDiscordContent(decodeGoogleText(translated), protectedMessage.replacements);
+  let restored = restoreDiscordContent(decodeGoogleText(translated), protectedMessage.replacements);
+  // Recover emoji shorthand if the provider or Discord strips the markup.
+  const emojis = new Map();
+  for (const match of text.matchAll(/<a?:([A-Za-z0-9_]+):\d+>/g)) {
+    if (!emojis.has(match[1])) emojis.set(match[1], match[0]);
+    else if (emojis.get(match[1]) !== match[0]) emojis.set(match[1], null);
+  }
+  restored = restored.replace(/<a?:[A-Za-z0-9_]+:\d+>|:([A-Za-z0-9_]+):/g, (match, name) => emojis.get(name) || match);
   translationCache.set(key, { text: restored, time: Date.now() });
 
   if (translationCache.size > 2000) {
